@@ -14,12 +14,13 @@ Each significant decision gets one short record: the context, the options we wei
 | [0003](0003-fixed-slot-pipelines.md) | Fixed-slot pipelines with pluggable strategies, not free-form pipeline graphs | Proposed |
 | [0004](0004-index-generations.md) | Index generations built from independently keyed builds | Proposed |
 | [0005](0005-verified-citations.md) | Citations are enforced, verified and attributed, not trusted | Proposed |
+| [0006](0006-python-and-langchain.md) | Python and LangChain for the first engine | Proposed |
 
 ## Planned
 
 Technology decisions, which wait for the research and the spikes in the [requirements](../requirements/04-constraints-and-scope.md#spikes):
 
-- Language and framework for the core, API server and web UI
+- Framework for the API server and web UI (the core is [ADR-0006](0006-python-and-langchain.md))
 - Storage: metadata store, lexical index and vector index, for the laptop and server profiles
 - GraphRAG method and graph store
 - Document parsing stack

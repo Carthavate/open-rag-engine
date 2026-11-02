@@ -2,11 +2,52 @@
 
 **An open-source RAG engine, built in the open by two engineers learning AI engineering.**
 
-> 🏗️ **Status: designing the architecture.** There's no code yet. Watch or star the repo to follow along, and open a discussion if you have ideas.
+> 🧪 **Status: first working version.** A command-line engine with the techniques from the RAG course: hybrid search, reciprocal rank fusion, multi-query, reranking and cited answers, all running locally on a laptop CPU. API, web UI, knowledge graph and scanned documents come next.
 
 ## Why we're building it
 
 We just finished a full course on retrieval-augmented generation and built a small RAG that runs in the browser for our learning platform, [AI Engineering Arena](https://github.com/TWadi/ai-engineering-arena). Now we want to build the real thing: a RAG engine you can run yourself, read end to end, and trust, because every answer shows exactly where it came from.
+
+## Try it
+
+You need Python 3.12+, [uv](https://docs.astral.sh/uv/) and [Ollama](https://ollama.com/).
+
+```bash
+uv sync
+ollama pull qwen3:4b-instruct-2507-q4_K_M
+cd examples                      # a small pump manual, in English and German
+uv run ore ingest docs
+uv run ore ask "Why does my pump keep turning itself off?"
+uv run ore search "error E1042" --trace
+uv run ore eval eval.jsonl
+uv run ore chat
+```
+
+The first run downloads the embedding and reranker models (about 1 GB). Everything then runs offline.
+
+A real answer from the example:
+
+```text
+$ ore ask "Wie viel kostet der Drucksensor?"
+Der Drucksensor PS-12 kostet 39 Euro [1].
+  [1] service.md
+```
+
+### What's inside
+
+| Course technique | Where | Switch |
+|---|---|---|
+| Recursive, Markdown and semantic chunking | `chunking.py` | `[chunking] strategy` |
+| Multilingual embeddings in Chroma | `store.py`, `factory.py` | `[embeddings] model` |
+| Similarity, score threshold, MMR, metadata filters | `retrieval.py` | `[retrieval] search_type`, `--source` |
+| BM25 keyword search + vectors, fused with reciprocal rank fusion | `retrieval.py`, `fusion.py` | `vector_weight`, `keyword_weight`, `rrf_k` |
+| Multi-query (RAG-Fusion) | `fusion.py`, `pipeline.py` | `--multi-query` |
+| Cross-encoder reranking | `rerank.py` | `[rerank]`, `--no-rerank` |
+| Conversational follow-ups | `conversation.py` | `ore chat` |
+| Cited answers that are checked, and abstention | `answer.py` | `[answer] min_rerank_score` |
+| Retrieval evaluation (hit rate, MRR, recall) | `evaluation.py` | `ore eval` |
+
+Every setting lives in [`ore.toml`](examples/ore.toml). `--trace` shows what each stage returned and how long it took.
 
 ## What it will do
 
@@ -30,8 +71,8 @@ Planned, and subject to the architecture work:
 
 ## Roadmap
 
-1. **Architecture** (now): requirements, design, first decision records.
-2. **MVP:** ingest → hybrid retrieval → answer with citations, plus the evaluation harness.
+1. **Architecture:** requirements, design, first decision records.
+2. **MVP** (now): ingest → hybrid retrieval → reranking → answer with citations, plus the evaluation harness.
 3. **Quality:** reranking, query transformations, multimodal documents.
 4. **Product:** API, web UI, deployment guide.
 
