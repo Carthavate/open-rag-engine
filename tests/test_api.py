@@ -113,3 +113,34 @@ def test_asking_while_indexing_is_a_conflict(config, tmp_path: Path):
     body = {"scope": {"kind": "section", "id": section_id}, "question": "pump?"}
     response = client.post("/ask", json=body, headers=AUTH)
     assert response.status_code == 409 and "Still indexing" in response.json()["detail"]
+
+
+def test_closing_the_stream_stops_the_answer():
+    import asyncio
+    import threading
+    import time
+
+    from open_rag_engine.api import answer_stream
+
+    produced: list[int] = []
+    finished = threading.Event()
+
+    def run(on_token):
+        try:
+            for i in range(200):
+                on_token(str(i))
+                produced.append(i)
+                time.sleep(0.01)
+            return {"type": "done"}
+        finally:
+            finished.set()
+
+    async def first_then_stop():
+        stream = answer_stream(run)
+        first = await anext(stream)
+        await stream.aclose()
+        return first
+
+    assert json.loads(asyncio.run(first_then_stop())) == {"type": "token", "text": "0"}
+    assert finished.wait(5)
+    assert len(produced) < 200

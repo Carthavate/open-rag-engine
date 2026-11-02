@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import os
-from functools import cached_property
+import threading
+from typing import Any
 
 from langchain_community.cross_encoders import HuggingFaceCrossEncoder
 from langchain_core.embeddings import Embeddings
@@ -15,9 +16,30 @@ from .config import EngineConfig
 class LocalModels:
     def __init__(self, config: EngineConfig):
         self._config = config
+        # One lock for all models: the warm-up and a first question must not load the same model twice, and on a
+        # CPU two loads at once would only slow each other down.
+        self._lock = threading.Lock()
+        self._loaded: dict[str, Any] = {}
 
-    @cached_property
+    def _once(self, name: str, build: Any) -> Any:
+        with self._lock:
+            if name not in self._loaded:
+                self._loaded[name] = build()
+            return self._loaded[name]
+
+    @property
     def embeddings(self) -> Embeddings:
+        return self._once("embeddings", self._embeddings)
+
+    @property
+    def cross_encoder(self) -> HuggingFaceCrossEncoder:
+        return self._once("cross_encoder", self._cross_encoder)
+
+    @property
+    def llm(self) -> BaseChatModel:
+        return self._once("llm", self._llm)
+
+    def _embeddings(self) -> Embeddings:
         from langchain_huggingface import HuggingFaceEmbeddings
 
         _quiet_transformers()
@@ -29,14 +51,12 @@ class LocalModels:
             query_encode_kwargs=_encode_kwargs(cfg.query_prefix),
         )
 
-    @cached_property
-    def cross_encoder(self) -> HuggingFaceCrossEncoder:
+    def _cross_encoder(self) -> HuggingFaceCrossEncoder:
         _quiet_transformers()
         model = self._config.model_path(self._config.rerank.model)
         return HuggingFaceCrossEncoder(model_name=model, model_kwargs={"device": "cpu"})
 
-    @cached_property
-    def llm(self) -> BaseChatModel:
+    def _llm(self) -> BaseChatModel:
         cfg = self._config.llm
         if cfg.provider == "openai":
             from langchain_openai import ChatOpenAI

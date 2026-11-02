@@ -7,11 +7,13 @@ traces or document content.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import queue
 import secrets
 import threading
+from collections.abc import AsyncIterator, Callable
 from dataclasses import asdict
 from typing import Any, Literal
 
@@ -160,33 +162,55 @@ def create_app(library: Library, token: str, origins: list[str]) -> FastAPI:
         library.scope_sections(body.scope.kind, body.scope.id)  # unknown or busy scopes fail before streaming starts
         history = [(t.question, t.answer) for t in body.history]
         default_section = body.scope.id if body.scope.kind == "section" else None
-        events: queue.Queue[dict[str, Any] | None] = queue.Queue()
 
-        def work() -> None:
-            try:
-                answer = library.ask(
-                    body.scope.kind,
-                    body.scope.id,
-                    body.question,
-                    history,
-                    on_token=lambda text: events.put({"type": "token", "text": text}),
-                )
-                events.put({"type": "done", **_answer(answer, default_section)})
-            except Exception as error:  # the stream is already open, so the error travels as an event
-                status, title, detail = _classify(error)
-                events.put({"type": "error", "status": status, "title": title, "detail": detail})
-            finally:
-                events.put(None)
+        def run(on_token: Callable[[str], None]) -> dict[str, Any]:
+            answer = library.ask(body.scope.kind, body.scope.id, body.question, history, on_token=on_token)
+            return {"type": "done", **_answer(answer, default_section)}
 
-        threading.Thread(target=work, name="ask", daemon=True).start()
-
-        def lines():
-            while (event := events.get()) is not None:
-                yield json.dumps(event, ensure_ascii=False) + "\n"
-
-        return StreamingResponse(lines(), media_type="application/x-ndjson")
+        return StreamingResponse(answer_stream(run), media_type="application/x-ndjson")
 
     return app
+
+
+class _Cancelled(Exception):
+    """The client stopped listening, so the answer is abandoned."""
+
+
+def answer_stream(run: Callable[[Callable[[str], None]], dict[str, Any]]) -> AsyncIterator[str]:
+    """Runs an answer in a worker thread and yields it as NDJSON lines: tokens, then the final event.
+
+    When the client goes away (Stop, a closed window), the stream is cancelled and the next token raises inside the
+    model's own token loop, so generation stops instead of running on for nobody.
+    """
+    events: queue.Queue[dict[str, Any] | None] = queue.Queue()
+    cancelled = threading.Event()
+
+    def on_token(text: str) -> None:
+        if cancelled.is_set():
+            raise _Cancelled
+        events.put({"type": "token", "text": text})
+
+    def work() -> None:
+        try:
+            events.put(run(on_token))
+        except _Cancelled:
+            pass
+        except Exception as error:  # the stream is already open, so the error travels as an event
+            status, title, detail = _classify(error)
+            events.put({"type": "error", "status": status, "title": title, "detail": detail})
+        finally:
+            events.put(None)
+
+    threading.Thread(target=work, name="ask", daemon=True).start()
+
+    async def lines() -> AsyncIterator[str]:
+        try:
+            while (event := await asyncio.to_thread(events.get)) is not None:
+                yield json.dumps(event, ensure_ascii=False) + "\n"
+        finally:
+            cancelled.set()
+
+    return lines()
 
 
 def _section(section: Section) -> dict[str, Any]:
