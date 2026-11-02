@@ -70,17 +70,28 @@ flowchart LR
     ext --> res["<b>Resolve</b><br/>Merge with existing entities:<br/>normalised name, type,<br/>embedding similarity"]:::stage
     res --> up["<b>Upsert</b><br/>Entities, relations and<br/>mentions, linked to chunks"]:::stage
     up --> stale["<b>Mark stale</b><br/>Communities that<br/>gained or lost members"]:::stage
-    stale -.->|"debounced"| comm["<b>Refresh communities</b><br/>Re-cluster, re-summarise<br/>stale communities only"]:::optional
+    stale -.->|"debounced"| comm["<b>Refresh communities</b><br/>Re-cluster the affected<br/>part of the graph"]:::stage
     comm --> done["GraphUpdated"]:::event
+    done -.->|"later, on first use"| lazy["<b>Summarise lazily</b><br/>Only communities that<br/>queries touch, then cached"]:::optional
 
     classDef stage fill:#1168bd,stroke:#0b4884,color:#ffffff
     classDef optional fill:#6b6b6b,stroke:#4a4a4a,color:#ffffff
     classDef event fill:#08427b,stroke:#052e56,color:#ffffff
 ```
 
-- **Extraction method is a per-collection choice:** off, a lightweight multilingual NER model (cheap, CPU-friendly, entities and co-occurrence only), or LLM extraction (entities, typed relations and descriptions, much more expensive). Results are cached per chunk content hash, so re-chunking only re-extracts changed text.
-- **Incremental by design.** New documents add to the existing graph. Only communities that changed are re-summarised, and that refresh is debounced so a bulk import triggers one refresh, not thousands.
-- **Budgeted.** Extraction has a token and time budget per collection. When it runs out, the remaining chunks wait for the next idle period; search keeps working with the graph built so far.
+The [graph research](../research/graphrag-family.md) shows that LLM-built graphs collapse with small models and cost hours per book on a CPU, while graphs built from named entities and co-occurrence, with no LLM at all, now match or beat them on multi-hop benchmarks. Extraction is therefore tiered:
+
+| Tier | Method | Cost on a laptop CPU | Default |
+|------|--------|----------------------|---------|
+| 0 | Off | None | |
+| 1 | Multilingual named-entity recognition and co-occurrence: a graph of chunks, sentences and entities, with no LLM | Minutes per book | **Yes, on the laptop profile** |
+| 2 | LLM extraction of typed relations and descriptions, with constrained output, 300–600-token windows, per-window caps, timeouts, and fallback to tier 1 when the output can't be parsed | Hours per book on CPU; practical with a GPU or a hosted model | On the GPU and server profiles, if spike S-3 confirms the value |
+
+- **Cached and incremental.** Extraction results are cached by chunk content hash, extractor identity and prompt version, so re-chunking only re-extracts changed text, and deletions remove exactly the evidence they contributed. New documents add to the existing graph.
+- **Entity resolution in cheap steps:** normalised names first, then embedding and fuzzy-string similarity, then an optional LLM verdict for ambiguous pairs.
+- **Communities are re-clustered locally.** Only the part of the graph that changed is re-clustered, and the refresh is debounced so a bulk import triggers one refresh, not thousands.
+- **Summaries are lazy.** Community summaries are written the first time a query needs them, then cached until the community changes. Operators with spare capacity can pre-summarise.
+- **Budgeted.** Extraction has a token and time budget per collection, with an estimate shown before it starts. When the budget runs out, the remaining chunks wait for the next idle period; search keeps working with the graph built so far.
 
 ## Resource scheduling on a laptop
 
