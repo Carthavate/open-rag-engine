@@ -6,6 +6,7 @@ import { Chip, Spinner } from "./components/primitives";
 import { EngineScreen, Pick, Welcome } from "./components/Screens";
 import { SectionPanel } from "./components/SectionPanel";
 import { Sidebar } from "./components/Sidebar";
+import { TitleBar } from "./components/TitleBar";
 import { useChat } from "./hooks/useChat";
 import { useEngine } from "./hooks/useEngine";
 import { useLibrary } from "./hooks/useLibrary";
@@ -79,7 +80,16 @@ export default function App() {
     };
   }, [api, sectionId, sectionReady]);
 
-  if (engine.state !== "ready") return <EngineScreen engine={engine} onRestart={() => host.restartEngine()} />;
+  if (engine.state !== "ready") {
+    return (
+      <div className="flex h-full flex-col">
+        <TitleBar />
+        <div className="min-h-0 flex-1">
+          <EngineScreen engine={engine} onRestart={() => host.restartEngine()} />
+        </div>
+      </div>
+    );
+  }
 
   const newCategory = () =>
     setNameRequest({
@@ -141,7 +151,9 @@ export default function App() {
   };
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full flex-col">
+      <TitleBar>{category && (section ? `${category.name} › ${section.name}` : category.name)}</TitleBar>
+      <div className="flex min-h-0 flex-1">
       <Sidebar
         library={library}
         selection={selection}
@@ -217,6 +229,7 @@ export default function App() {
           <Pick text="Choose a section on the left, or create one in a category." />
         )}
       </main>
+      </div>
       <NameDialog request={nameRequest} onClose={() => setNameRequest(null)} />
       <ConfirmDialog request={confirm} onClose={() => setConfirm(null)} />
       <Toast message={notice} onClose={() => setNotice(null)} />

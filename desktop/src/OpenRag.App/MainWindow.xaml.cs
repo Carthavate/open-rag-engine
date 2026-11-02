@@ -38,6 +38,10 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        ApplyTheme();
+        SourceInitialized += (_, _) => WindowFrame.RoundCorners(this);
+        StateChanged += (_, _) => OnWindowStateChanged();
+        SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
         Loaded += async (_, _) => await Task.WhenAll(StartWebViewAsync(), StartEngineAsync());
         Closing += async (_, _) => await ShutdownAsync();
     }
@@ -140,8 +144,9 @@ public partial class MainWindow : Window
 
         var core = Web.CoreWebView2;
         var dev = _devUrl is not null;
-        Web.DefaultBackgroundColor = System.Drawing.Color.FromArgb(0xEA, 0xF2, 0xFF);
         core.Settings.IsStatusBarEnabled = false;
+        // The page's top bar is the title bar: `app-region: drag` areas move the window, double-click maximises.
+        core.Settings.IsNonClientRegionSupportEnabled = true;
         core.Settings.IsZoomControlEnabled = false;
         core.Settings.AreBrowserAcceleratorKeysEnabled = dev;
         core.Settings.AreDefaultContextMenusEnabled = dev;
@@ -178,6 +183,10 @@ public partial class MainWindow : Window
             {
                 case "ready":
                     Post(_engineState);
+                    PostWindowState();
+                    break;
+                case "window":
+                    OnWindowButton(message.GetProperty("action").GetString());
                     break;
                 case "pickFolder":
                     PickFolder(message.GetProperty("id").GetString());
@@ -210,6 +219,46 @@ public partial class MainWindow : Window
         {
             Post(new { type = "notice", message = $"Something went wrong: {ex.Message}" });
         }
+    }
+
+    private void OnWindowButton(string? action)
+    {
+        switch (action)
+        {
+            case "minimize":
+                WindowState = WindowState.Minimized;
+                break;
+            case "maximize":
+                WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+                break;
+            case "close":
+                Close();
+                break;
+        }
+    }
+
+    private void OnWindowStateChanged()
+    {
+        Frame.Padding = WindowFrame.Padding(WindowState == WindowState.Maximized);
+        PostWindowState();
+    }
+
+    private void PostWindowState() => Post(new { type = "windowState", maximized = WindowState == WindowState.Maximized });
+
+    private void OnUserPreferenceChanged(object sender, UserPreferenceChangedEventArgs e)
+    {
+        if (e.Category == UserPreferenceCategory.General)
+        {
+            Dispatcher.Invoke(ApplyTheme);
+        }
+    }
+
+    /// <summary>The frame and the first frame before the page paints use the Arena background for light or dark mode.</summary>
+    private void ApplyTheme()
+    {
+        var color = WindowFrame.IsDarkMode() ? WindowFrame.Dark : WindowFrame.Light;
+        Background = new System.Windows.Media.SolidColorBrush(color);
+        Web.DefaultBackgroundColor = System.Drawing.Color.FromArgb(color.R, color.G, color.B);
     }
 
     private static string? Body(JsonElement message) =>
@@ -293,6 +342,7 @@ public partial class MainWindow : Window
 
     private async Task ShutdownAsync()
     {
+        SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
         foreach (var ask in _asks.Values)
         {
             ask.Cancel();

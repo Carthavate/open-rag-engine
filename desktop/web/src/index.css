@@ -173,3 +173,14 @@ input,
     opacity: 1;
   }
 }
+
+/* The top bar moves the window like a title bar (WebView2 non-client regions); its buttons stay clickable. */
+@utility drag {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+@utility no-drag {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}

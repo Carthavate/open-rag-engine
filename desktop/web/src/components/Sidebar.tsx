@@ -1,7 +1,7 @@
 import { AlertCircle, BookOpen, ChevronRight, FolderClosed, Pencil, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { useState } from "react";
 import type { Category, Library, Scope, Section } from "../lib/types";
-import { IconButton, LogoMark, Spinner } from "./primitives";
+import { IconButton, Spinner } from "./primitives";
 
 type Props = {
   library: Library | null;
@@ -17,14 +17,7 @@ export function Sidebar(props: Props) {
   const { library, onNewCategory } = props;
   return (
     <aside className="sticker m-3 mr-0 flex w-72 shrink-0 flex-col rounded-[20px]">
-      <header className="flex items-center gap-3 border-b-[2.5px] border-edge px-4 pt-4 pb-3.5">
-        <LogoMark />
-        <div className="leading-tight">
-          <div className="font-display text-[22px]">Open RAG</div>
-          <div className="text-[12px] text-ink-2">Ask your own documents</div>
-        </div>
-      </header>
-      <div className="flex items-center justify-between px-4 pt-3 pb-1">
+      <div className="flex items-center justify-between px-4 pt-4 pb-1">
         <span className="font-mono text-[11.5px] font-semibold tracking-[0.1em] text-ink-2 uppercase">Library</span>
         <IconButton label="New category" onClick={onNewCategory}>
           <Plus className="size-4" />
