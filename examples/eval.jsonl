@@ -1,0 +1,12 @@
+{"question": "How much electricity does the pump use?", "expected_sources": ["power.md"]}
+{"question": "What does error E1042 mean?", "expected_sources": ["error-codes.md"]}
+{"question": "Why does my pump keep turning itself off?", "expected_sources": ["protection.md"]}
+{"question": "How do I switch the pump off?", "expected_sources": ["operating.md"]}
+{"question": "What should I do with the pump before winter?", "expected_sources": ["winter.md"]}
+{"question": "Is frost damage covered by the warranty?", "expected_sources": ["warranty.md"]}
+{"question": "How far from the wall should the pump stand?", "expected_sources": ["installation.md"]}
+{"question": "How often should I clean the filter?", "expected_sources": ["maintenance.md"]}
+{"question": "Wie viel kostet der Drucksensor?", "expected_sources": ["de/service.md"]}
+{"question": "Warum ist die Pumpe beim Start so laut?", "expected_sources": ["de/geraeusche.md"]}
+{"question": "Wie viel Strom braucht die Pumpe?", "expected_sources": ["power.md"]}
+{"question": "Que faire si la pompe surchauffe ?", "expected_sources": ["error-codes.md", "protection.md"]}

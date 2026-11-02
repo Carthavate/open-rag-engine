@@ -30,4 +30,14 @@ Types: `feat`, `fix`, `refactor`, `perf`, `test`, `docs`, `ci`, `chore`.
 - **Evaluation numbers** come with every change to retrieval or generation: before and after, on the same dataset.
 - **Architectural decisions** get a short decision record in `docs/adr/`.
 
-Development setup instructions will be added once the architecture is settled.
+## Development setup
+
+You need Python 3.12+, [uv](https://docs.astral.sh/uv/) and, for answers, [Ollama](https://ollama.com/).
+
+```bash
+uv sync                    # installs everything, with CPU-only PyTorch
+uv run pytest --cov        # tests use small fake models, so they need no downloads
+uv run ruff check src tests && uv run ruff format --check src tests
+```
+
+The first real `ore` command downloads the embedding and reranker models from Hugging Face (about 1 GB). Answers need `ollama pull qwen3:4b-instruct-2507-q4_K_M`.

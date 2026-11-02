@@ -1,0 +1,27 @@
+# Example configuration for the AquaFlow P200 manual. Every value shown is the default unless commented.
+collection = "aquaflow"
+data_dir = ".ore"
+
+[chunking]
+strategy = "markdown"   # recursive | markdown | semantic
+chunk_size = 800
+chunk_overlap = 120
+
+[embeddings]
+model = "intfloat/multilingual-e5-small"
+
+[retrieval]
+search_type = "similarity"   # similarity | mmr | threshold
+k = 20
+vector_weight = 0.7
+keyword_weight = 0.3
+multi_query = false
+
+[rerank]
+enabled = true
+model = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
+top_n = 5
+
+[llm]
+model = "qwen3:4b-instruct-2507-q4_K_M"
+think = false   # true or remove for reasoning-only models

@@ -14,8 +14,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -218,3 +218,13 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# open-rag-engine local data
+.ore/
+
+# Desktop app build output
+desktop/**/bin/
+desktop/**/obj/
+desktop/web/node_modules/
+desktop/web/dist/
+desktop/web/.vite/
