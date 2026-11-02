@@ -105,6 +105,23 @@ public class EngineLocatorTests
     }
 
     [Fact]
+    public void An_installed_app_brings_its_language_model()
+    {
+        using var dir = new TempDir();
+        dir.Make("engine", "python", "python.exe");
+        var server = dir.Make("engine", "llm", "llama-server.exe");
+        var model = dir.Make("engine", "llm", "model.gguf");
+        var command = EngineLocator.Find(dir.Path, Env(), allowCheckout: false)!;
+        Assert.Equal(new LlmBundle(server, model), command.Llm);
+        var args = command.Llm!.Arguments(4242);
+        Assert.Equal("127.0.0.1", args[args.ToList().IndexOf("--host") + 1]);
+        Assert.Equal("4242", args[args.ToList().IndexOf("--port") + 1]);
+    }
+
+    [Fact]
+    public void Free_ports_are_real_loopback_ports() => Assert.InRange(LlmBundle.FreePort(), 1024, 65535);
+
+    [Fact]
     public void Finds_a_development_checkout_above_the_app()
     {
         using var dir = new TempDir();
@@ -150,9 +167,18 @@ public class EngineLocatorTests
         Assert.Equal(["-m", "open_rag_engine", "serve", "--data-dir", "C:/data", "--parent-pid", "42", "--warm",
             "--config", "C:/app/ore.toml"], args);
     }
+
+    [Fact]
+    public void Serve_arguments_point_the_engine_at_the_bundled_model()
+    {
+        var command = new EngineCommand("python.exe", ["-m", "open_rag_engine", "serve"], "C:/app", null);
+        var args = command.ServeArguments("C:/data", 42, "http://127.0.0.1:5000/v1");
+        Assert.Equal(["-m", "open_rag_engine", "serve", "--data-dir", "C:/data", "--parent-pid", "42", "--warm",
+            "--llm-url", "http://127.0.0.1:5000/v1"], args);
+    }
 }
 
-public class EngineHostTests
+public class ChildHostTests
 {
     private static EngineCommand Cmd(string script) => new("cmd.exe", ["/c", script], Environment.CurrentDirectory, null);
 
@@ -160,7 +186,7 @@ public class EngineHostTests
     public async Task Start_returns_the_port_the_engine_announces()
     {
         using var dir = new TempDir();
-        await using var host = new EngineHost(Cmd("echo starting & echo ORE_READY port=4321 & ping -n 20 127.0.0.1 >nul"),
+        await using var host = new ChildHost(Cmd("echo starting & echo ORE_READY port=4321 & ping -n 20 127.0.0.1 >nul"),
             ["/c", "echo starting & echo ORE_READY port=4321 & ping -n 20 127.0.0.1 >nul"], Path.Combine(dir.Path, "engine.log"));
         var connection = await host.StartAsync(new Dictionary<string, string> { ["ORE_API_TOKEN"] = "x" }, TimeSpan.FromSeconds(20));
         Assert.Equal(new Uri("http://127.0.0.1:4321/"), connection.BaseUrl);
@@ -172,7 +198,7 @@ public class EngineHostTests
     {
         using var dir = new TempDir();
         var script = "echo ORE_READY port=4322 & ping -n 30 127.0.0.1 >nul";
-        await using var host = new EngineHost(Cmd(script), ["/c", script], Path.Combine(dir.Path, "engine.log"));
+        await using var host = new ChildHost(Cmd(script), ["/c", script], Path.Combine(dir.Path, "engine.log"));
         var crashes = 0;
         host.Exited += _ => crashes++;
         await host.StartAsync(new Dictionary<string, string>(), TimeSpan.FromSeconds(20));
@@ -186,7 +212,7 @@ public class EngineHostTests
     {
         using var dir = new TempDir();
         var script = "ping -n 30 127.0.0.1 >nul";
-        await using var host = new EngineHost(Cmd(script), ["/c", script], Path.Combine(dir.Path, "engine.log"));
+        await using var host = new ChildHost(Cmd(script), ["/c", script], Path.Combine(dir.Path, "engine.log"));
         System.Diagnostics.Process? started = null;
         host.Started += p => started = p;
         await Assert.ThrowsAsync<EngineStartException>(() => host.StartAsync(new Dictionary<string, string>(), TimeSpan.FromSeconds(1)));
@@ -194,10 +220,33 @@ public class EngineHostTests
     }
 
     [Fact]
+    public async Task A_health_probe_decides_when_a_server_is_ready()
+    {
+        using var dir = new TempDir();
+        var script = "echo loading & ping -n 30 127.0.0.1 >nul";
+        await using var host = new ChildHost(Cmd(script), ["/c", script], Path.Combine(dir.Path, "llm.log"), "language model");
+        var checks = 0;
+        await host.StartAsync(new Dictionary<string, string>(), _ => Task.FromResult(++checks >= 3), TimeSpan.FromSeconds(20));
+        Assert.Equal(3, checks);
+    }
+
+    [Fact]
+    public async Task A_server_that_exits_while_loading_is_reported()
+    {
+        using var dir = new TempDir();
+        var script = "echo failed to load model 1>&2 & exit 1";
+        await using var host = new ChildHost(Cmd(script), ["/c", script], Path.Combine(dir.Path, "llm.log"), "language model");
+        var error = await Assert.ThrowsAsync<EngineStartException>(() =>
+            host.StartAsync(new Dictionary<string, string>(), _ => Task.FromResult(false), TimeSpan.FromSeconds(20)));
+        Assert.Contains("failed to load model", error.Message);
+        Assert.Contains("language model", error.Message);
+    }
+
+    [Fact]
     public async Task A_crash_before_ready_reports_the_last_output()
     {
         using var dir = new TempDir();
-        await using var host = new EngineHost(Cmd("echo no module named open_rag_engine 1>&2 & exit 3"),
+        await using var host = new ChildHost(Cmd("echo no module named open_rag_engine 1>&2 & exit 3"),
             ["/c", "echo no module named open_rag_engine 1>&2 & exit 3"], Path.Combine(dir.Path, "engine.log"));
         var error = await Assert.ThrowsAsync<EngineStartException>(() =>
             host.StartAsync(new Dictionary<string, string>(), TimeSpan.FromSeconds(20)));

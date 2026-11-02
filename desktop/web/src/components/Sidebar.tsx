@@ -1,6 +1,7 @@
 import { AlertCircle, BookOpen, ChevronRight, FolderClosed, Pencil, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { useState } from "react";
 import type { Category, Library, Scope, Section } from "../lib/types";
+import { Credits } from "./Credits";
 import { IconButton, Spinner } from "./primitives";
 
 type Props = {
@@ -38,9 +39,12 @@ export function Sidebar(props: Props) {
           </p>
         )}
       </nav>
-      <footer className="m-3 flex items-center gap-2 rounded-xl border-2 border-edge bg-done px-3 py-2 text-[12px] font-bold text-ink">
-        <ShieldCheck className="size-4 shrink-0 text-mint" />
-        Offline. Nothing leaves this computer.
+      <footer>
+        <p className="mx-3 mt-3 mb-1 flex items-center gap-2 rounded-xl border-2 border-edge bg-done px-3 py-2 text-[12px] font-bold text-ink">
+          <ShieldCheck className="size-4 shrink-0 text-mint" />
+          Offline. Nothing leaves this computer.
+        </p>
+        <Credits />
       </footer>
     </aside>
   );

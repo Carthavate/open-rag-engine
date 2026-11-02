@@ -21,6 +21,7 @@ public partial class MainWindow : Window
     private const string DevUrlVariable = "OPENRAG_DEV_URL";
 
     private static readonly TimeSpan EngineStartTimeout = TimeSpan.FromMinutes(3);
+    private static readonly TimeSpan HealthCheckTimeout = TimeSpan.FromSeconds(2);
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private static readonly string WebRoot = Path.Combine(AppContext.BaseDirectory, "wwwroot");
 
@@ -32,7 +33,8 @@ public partial class MainWindow : Window
     private readonly HttpClient _http = new(new SocketsHttpHandler { UseProxy = false }) { Timeout = Timeout.InfiniteTimeSpan };
     private readonly SemaphoreSlim _lifecycle = new(1, 1);
     private readonly Dictionary<string, CancellationTokenSource> _asks = [];
-    private EngineHost? _engine;
+    private ChildHost? _engine;
+    private ChildHost? _llm;
     private EngineProxy? _proxy;
     private object _engineState = new { type = "engine", state = "starting" };
     private string _origin = $"https://{AppHost}";
@@ -115,44 +117,77 @@ public partial class MainWindow : Window
         }
         try
         {
-            var engine = new EngineHost(command, command.ServeArguments(_paths.Data, Environment.ProcessId), _paths.EngineLog);
-            engine.Started += process => _job?.Add(process);
-            // Only the current engine may report a crash; a late exit from a replaced one is ignored.
-            engine.Exited += code => Dispatcher.BeginInvoke(() =>
+            var environment = new Dictionary<string, string> { ["ORE_API_TOKEN"] = _token };
+            string? llmUrl = null;
+            Task llmReady = Task.CompletedTask;
+            if (command.Llm is { } bundle)
             {
-                if (!ReferenceEquals(engine, _engine))
-                {
-                    return;
-                }
-                _proxy = null;
-                SetEngineState("failed", $"The engine stopped unexpectedly (exit code {code}). Details are in {_paths.EngineLog}.");
-            });
-            _engine = engine;
-            var connection = await engine.StartAsync(new Dictionary<string, string> { ["ORE_API_TOKEN"] = _token }, EngineStartTimeout);
+                // The language model loads while the engine warms up; both must be ready before the first question.
+                var port = LlmBundle.FreePort();
+                var key = Token.New();
+                llmUrl = $"http://127.0.0.1:{port}/v1";
+                environment["ORE_LLM_API_KEY"] = key;
+                _llm = Watch(new ChildHost(new EngineCommand(bundle.ServerPath, [], Path.GetDirectoryName(bundle.ServerPath)!, null),
+                    bundle.Arguments(port), _paths.LlmLog, "language model"), _paths.LlmLog);
+                llmReady = _llm.StartAsync(new Dictionary<string, string> { [LlmBundle.ApiKeyVariable] = key },
+                    cancel => IsHealthyAsync(port, cancel), EngineStartTimeout);
+            }
+            _engine = Watch(new ChildHost(command, command.ServeArguments(_paths.Data, Environment.ProcessId, llmUrl), _paths.EngineLog),
+                _paths.EngineLog);
+            var connection = await _engine.StartAsync(environment, EngineStartTimeout);
+            await llmReady;
             _proxy = new EngineProxy(_http, connection.BaseUrl, _token);
             SetEngineState("ready");
         }
         catch (EngineStartException e)
         {
-            SetEngineState("failed", $"{e.Message}\n\nThe full log is in {_paths.EngineLog}.");
+            await StopEngineAsync();
+            SetEngineState("failed", $"{e.Message}\n\nThe logs are in {_paths.Logs}.");
         }
         catch (Exception e)
         {
             // Anything else (no permission to create the log folder, a blocked program) must not leave "starting" forever.
             LogError(e);
+            await StopEngineAsync();
             SetEngineState("failed", $"Open RAG couldn't start its engine: {e.Message}\n\nDetails are in {_paths.ErrorLog}.");
         }
+    }
+
+    /// <summary>Puts a helper process in the job object and reports a crash, but only while it is still the current one:
+    /// a late exit from a replaced engine or model is ignored.</summary>
+    private ChildHost Watch(ChildHost host, string log)
+    {
+        host.Started += process => _job?.Add(process);
+        host.Exited += code => Dispatcher.BeginInvoke(() =>
+        {
+            if (!ReferenceEquals(host, _engine) && !ReferenceEquals(host, _llm))
+            {
+                return;
+            }
+            _proxy = null;
+            var what = ReferenceEquals(host, _llm) ? "language model" : "engine";
+            SetEngineState("failed", $"The {what} stopped unexpectedly (exit code {code}). Details are in {log}.");
+        });
+        return host;
+    }
+
+    /// <summary>llama-server answers /health with 200 once the model is loaded (503 while loading).</summary>
+    private async Task<bool> IsHealthyAsync(int port, CancellationToken cancel)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+        timeout.CancelAfter(HealthCheckTimeout);
+        using var response = await _http.GetAsync($"http://127.0.0.1:{port}/health", timeout.Token);
+        return response.IsSuccessStatusCode;
     }
 
     private async Task StopEngineAsync()
     {
         _proxy = null;
         var engine = _engine;
+        var llm = _llm;
         _engine = null;
-        if (engine is not null)
-        {
-            await engine.DisposeAsync();
-        }
+        _llm = null;
+        await Task.WhenAll(engine?.DisposeAsync().AsTask() ?? Task.CompletedTask, llm?.DisposeAsync().AsTask() ?? Task.CompletedTask);
     }
 
     private void LogError(Exception e)
@@ -261,6 +296,9 @@ public partial class MainWindow : Window
                     break;
                 case "restartEngine":
                     await StartEngineAsync(restart: true);
+                    break;
+                case "openLink":
+                    OpenLink(message.GetProperty("url").GetString());
                     break;
                 case "api":
                     await ForwardAsync(message);
@@ -417,6 +455,23 @@ public partial class MainWindow : Window
         catch (System.ComponentModel.Win32Exception ex)
         {
             Post(new { type = "notice", message = $"Couldn't open {Path.GetFileName(full)}: {ex.Message}" });
+        }
+    }
+
+    /// <summary>Opens one of the app's own links (the credits, the source code) in the default browser.</summary>
+    private void OpenLink(string? url)
+    {
+        if (!ExternalLinks.IsAllowed(url))
+        {
+            return;
+        }
+        try
+        {
+            Process.Start(new ProcessStartInfo(url!) { UseShellExecute = true });
+        }
+        catch (System.ComponentModel.Win32Exception ex)
+        {
+            Post(new { type = "notice", message = $"Couldn't open your browser: {ex.Message}" });
         }
     }
 

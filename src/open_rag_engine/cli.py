@@ -55,8 +55,12 @@ SourceOpt = Annotated[str | None, typer.Option(help="Only search chunks from thi
 TraceOpt = Annotated[bool, typer.Option("--trace", help="Show what every pipeline stage returned.")]
 
 
+def _models_on_disk(config: EngineConfig) -> list[str]:
+    return [config.model_path(config.embeddings.model), config.model_path(config.rerank.model)]
+
+
 def build_engine(config: EngineConfig) -> Engine:
-    go_offline_if_possible([config.embeddings.model, config.rerank.model])
+    go_offline_if_possible(_models_on_disk(config))
     return Engine.from_config(config)
 
 
@@ -248,6 +252,9 @@ def serve(
     parent_pid: Annotated[int | None, typer.Option(help="Exit when this process exits.")] = None,
     data_dir: Annotated[Path | None, typer.Option(help="Where indexes and the workspace live.")] = None,
     warm: Annotated[bool, typer.Option(help="Load the embedding and reranker models in the background.")] = False,
+    llm_url: Annotated[
+        str | None, typer.Option(help="OpenAI-compatible LLM server to use instead of the configured one.")
+    ] = None,
     config: ConfigOpt = None,
 ) -> None:
     """Run the local API for the desktop app. Prints `ORE_READY port=<n>` once it listens."""
@@ -259,7 +266,9 @@ def serve(
         cfg = _config(config)
         if data_dir is not None:
             cfg = EngineConfig.model_validate({**cfg.model_dump(), "data_dir": data_dir})
-        go_offline_if_possible([cfg.embeddings.model, cfg.rerank.model])
+        if llm_url is not None:
+            cfg = cfg.updated("llm", provider="openai", base_url=llm_url)
+        go_offline_if_possible(_models_on_disk(cfg))
         from .api import create_app
         from .factory import LocalModels
         from .library import Library

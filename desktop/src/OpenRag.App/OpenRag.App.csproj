@@ -17,6 +17,9 @@
     <AssemblyName>OpenRag</AssemblyName>
     <AssemblyTitle>Open RAG</AssemblyTitle>
     <Product>Open RAG</Product>
+    <Authors>Wadi Touil; Ghassen Jamoussi</Authors>
+    <Company>Carthavate</Company>
+    <Copyright>Copyright (C) 2026 Wadi Touil and Ghassen Jamoussi</Copyright>
     <Version>0.1.0</Version>
     <ApplicationIcon>Assets\OpenRag.ico</ApplicationIcon>
     <WebRoot>$(MSBuildThisFileDirectory)..\..\web\</WebRoot>
