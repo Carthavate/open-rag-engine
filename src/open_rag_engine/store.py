@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -79,10 +78,11 @@ class ChunkStore:
 
     def reset(self) -> None:
         """Drop everything in this collection, for a rebuild with a new index configuration."""
+        # delete_collection removes the vectors. Chroma's folder stays: its client is cached per folder and keeps the
+        # database open, so deleting the folder (which Linux allows) leaves it writing to a deleted file.
         self.vectors.delete_collection()
         for path in (self._chunks_path, self._manifest_path):
             path.unlink(missing_ok=True)
-        shutil.rmtree(self.directory / "chroma", ignore_errors=True)
         self.vectors = self._open_vectors()
 
     def _write_chunks(self, chunks: list[Document]) -> None:

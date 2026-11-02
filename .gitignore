@@ -227,3 +227,4 @@ desktop/**/bin/
 desktop/**/obj/
 desktop/web/node_modules/
 desktop/web/dist/
+desktop/web/.vite/
