@@ -17,6 +17,8 @@ export interface Host {
   openSource(path: string): void;
   revealSource(path: string): void;
   restartEngine(): void;
+  /** Opens a web page in the default browser; the window opens only the links on its own list. */
+  openLink(url: string): void;
   /** The custom title bar's buttons; only the desktop window has them. */
   windowAction(action: "minimize" | "maximize" | "close"): void;
   onWindowState(listener: (maximized: boolean) => void): () => void;
@@ -121,6 +123,7 @@ function desktopHost(bridge: WebViewBridge): Host {
     openSource: (path) => bridge.postMessage({ type: "openSource", path }),
     revealSource: (path) => bridge.postMessage({ type: "revealSource", path }),
     restartEngine: () => bridge.postMessage({ type: "restartEngine" }),
+    openLink: (url) => bridge.postMessage({ type: "openLink", url }),
     windowAction: (action) => bridge.postMessage({ type: "window", action }),
     onWindowState: (listener) => listen((m) => m?.type === "windowState" && listener(m.maximized)),
   };
@@ -142,6 +145,7 @@ function browserHost(): Host {
     openSource: (path) => window.alert(`Would open ${path}`),
     revealSource: (path) => window.alert(`Would show ${path} in Explorer`),
     restartEngine: () => window.location.reload(),
+    openLink: (url) => window.open(url, "_blank", "noopener,noreferrer"),
     windowAction: () => {},
     onWindowState: () => () => {},
   };
