@@ -60,7 +60,7 @@ export function Chat({ title, messages, busy, blocked, onSend, onStop, onClear, 
               {blocked}
             </div>
           )}
-          <div className="sticker flex items-end gap-2 rounded-[18px] p-2 pl-4 focus-within:shadow-[4px_4px_0_var(--cobalt)]">
+          <div className="sticker flex items-end gap-2 rounded-[18px] p-2 pl-4 transition-shadow focus-within:border-accent focus-within:shadow-[4px_4px_0_var(--cobalt)]">
             <textarea
               ref={box}
               rows={1}
@@ -74,7 +74,7 @@ export function Chat({ title, messages, busy, blocked, onSend, onStop, onClear, 
                   send();
                 }
               }}
-              className="max-h-40 min-h-6 flex-1 resize-none bg-transparent py-1.5 text-[15px] leading-6 text-ink outline-none placeholder:text-ink-3 disabled:opacity-50"
+              className="max-h-40 min-h-6 flex-1 resize-none bg-transparent py-1.5 text-[15px] leading-6 text-ink outline-none placeholder:text-ink-3 focus-visible:outline-none disabled:opacity-50"
             />
             {messages.length > 0 && !busy && (
               <IconButton label="Clear conversation" onClick={onClear} className="size-8">

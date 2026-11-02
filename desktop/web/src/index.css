@@ -136,9 +136,12 @@ h3 {
   letter-spacing: 0.01em;
 }
 
-:focus-visible {
-  outline: 3px solid var(--cobalt);
-  outline-offset: 2px;
+/* In the base layer, so components with their own focus style (the question box, dialog fields) can replace it. */
+@layer base {
+  :focus-visible {
+    outline: 3px solid var(--cobalt);
+    outline-offset: 2px;
+  }
 }
 
 textarea,
