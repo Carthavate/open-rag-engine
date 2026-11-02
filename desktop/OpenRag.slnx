@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/OpenRag.App/OpenRag.App.csproj" />
+    <Project Path="src/OpenRag.Core/OpenRag.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/OpenRag.Core.Tests/OpenRag.Core.Tests.csproj" />
+  </Folder>
+</Solution>

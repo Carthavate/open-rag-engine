@@ -55,8 +55,12 @@ SourceOpt = Annotated[str | None, typer.Option(help="Only search chunks from thi
 TraceOpt = Annotated[bool, typer.Option("--trace", help="Show what every pipeline stage returned.")]
 
 
+def _models_on_disk(config: EngineConfig) -> list[str]:
+    return [config.model_path(config.embeddings.model), config.model_path(config.rerank.model)]
+
+
 def build_engine(config: EngineConfig) -> Engine:
-    go_offline_if_possible([config.embeddings.model, config.rerank.model])
+    go_offline_if_possible(_models_on_disk(config))
     return Engine.from_config(config)
 
 
@@ -246,6 +250,11 @@ def serve(
     port: Annotated[int, typer.Option(help="Port on 127.0.0.1; 0 picks a free one.")] = 0,
     origin: Annotated[list[str] | None, typer.Option(help="Web origin allowed to call the API.")] = None,
     parent_pid: Annotated[int | None, typer.Option(help="Exit when this process exits.")] = None,
+    data_dir: Annotated[Path | None, typer.Option(help="Where indexes and the workspace live.")] = None,
+    warm: Annotated[bool, typer.Option(help="Load the embedding and reranker models in the background.")] = False,
+    llm_url: Annotated[
+        str | None, typer.Option(help="OpenAI-compatible LLM server to use instead of the configured one.")
+    ] = None,
     config: ConfigOpt = None,
 ) -> None:
     """Run the local API for the desktop app. Prints `ORE_READY port=<n>` once it listens."""
@@ -255,12 +264,19 @@ def serve(
         if len(token) < 32:
             raise ValueError(f"Set {TOKEN_VARIABLE} to a random secret of at least 32 characters.")
         cfg = _config(config)
-        go_offline_if_possible([cfg.embeddings.model, cfg.rerank.model])
+        if data_dir is not None:
+            cfg = EngineConfig.model_validate({**cfg.model_dump(), "data_dir": data_dir})
+        if llm_url is not None:
+            cfg = cfg.updated("llm", provider="openai", base_url=llm_url)
+        go_offline_if_possible(_models_on_disk(cfg))
         from .api import create_app
         from .factory import LocalModels
         from .library import Library
 
-        api = create_app(Library(cfg, LocalModels(cfg)), token, origin or ["https://app.ore"])
+        models = LocalModels(cfg)
+        api = create_app(Library(cfg, models), token, origin or ["https://app.ore"])
+        if warm:
+            threading.Thread(target=_warm, args=(models,), name="warm-up", daemon=True).start()
         server = _listen(port)
         typer.echo(f"ORE_READY port={server.getsockname()[1]}")
         sys.stdout.flush()
@@ -271,6 +287,15 @@ def serve(
         uvicorn.Server(uvicorn.Config(api, log_level="warning", access_log=False)).run(sockets=[server])
 
     _run(action)
+
+
+def _warm(models: Any) -> None:
+    """Load the models before the first question, so it isn't the one that waits."""
+    try:
+        models.embeddings.embed_query("warm-up")
+        models.cross_encoder.score([("warm-up", "warm-up")])
+    except Exception as error:  # the first real request will load (and report) them instead
+        typer.echo(f"warm-up skipped: {error}", err=True)
 
 
 def _listen(port: int) -> socket.socket:

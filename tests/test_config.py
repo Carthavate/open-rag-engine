@@ -69,3 +69,17 @@ def test_index_fingerprint_tracks_only_what_changes_the_index():
     assert cfg.index_fingerprint() == cfg.updated("retrieval", k=3).index_fingerprint()
     assert cfg.index_fingerprint() != cfg.updated("chunking", chunk_size=400).index_fingerprint()
     assert cfg.fingerprint() != cfg.updated("retrieval", k=3).fingerprint()
+
+
+def test_bundled_models_load_from_models_dir_without_changing_the_index(tmp_path: Path):
+    (tmp_path / "models" / "intfloat--multilingual-e5-small").mkdir(parents=True)
+    path = tmp_path / "ore.toml"
+    path.write_text('models_dir = "models"\n', encoding="utf-8")
+    cfg = load_config(path)
+    assert cfg.models_dir == tmp_path / "models"
+    assert cfg.model_path("intfloat/multilingual-e5-small") == str(
+        tmp_path / "models" / "intfloat--multilingual-e5-small"
+    )
+    assert cfg.model_path("cross-encoder/other") == "cross-encoder/other"
+    assert cfg.index_fingerprint() == EngineConfig().index_fingerprint()
+    assert cfg.fingerprint() == EngineConfig().fingerprint()

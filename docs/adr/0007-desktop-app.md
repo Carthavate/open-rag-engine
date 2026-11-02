@@ -35,11 +35,15 @@ Option 1, the same structure as our Duet app.
   - It ties the engine to a job object, so the engine dies with the app. `--parent-pid` is the backstop.
 - **Interface (React and Tailwind, in WebView2).**
   - It is served from the app's own files on a virtual host (`https://app.ore`), so it needs no network.
-  - It calls the engine's API directly, with the token the shell hands it, and streams answers as newline-delimited JSON.
-- **Engine API (FastAPI, `ore serve`).** It is reachable only from this machine, through three guards:
+  - It reaches the engine only through the shell: API calls and questions go out as WebView2 messages.
+  - The shell's proxy adds the token and allows only the engine's API paths. Answers stream back line by line.
+  - The page never sees the token and never opens a connection to a local port. That also avoids the browser's
+    local-network restrictions for pages that call `127.0.0.1`.
+  - The look is the AI Engineering Arena's "sticker arcade" theme, with its fonts bundled, so the app looks the same offline.
+- **Engine API (FastAPI, `ore serve`).** Only the shell calls it. It is reachable only from this machine, through three guards:
   1. It binds to `127.0.0.1` and rejects any non-loopback `Host` header, which blocks DNS rebinding.
   2. Every request needs the per-launch bearer token.
-  3. CORS allows only `https://app.ore`.
+  3. CORS allows only `https://app.ore`, plus a development origin when one is given with `--origin`.
 
   Errors are problem details (RFC 9457) without stack traces or document content.
 - **One index per section.** A section is one collection: a Chroma index plus BM25 chunks.

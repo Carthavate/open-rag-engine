@@ -120,3 +120,19 @@ def test_listen_binds_loopback_on_a_free_port():
         assert host == "127.0.0.1" and port > 0
     finally:
         server.close()
+
+
+def test_warm_up_loads_both_models_and_never_raises():
+    calls = []
+
+    class Models:
+        @property
+        def embeddings(self):
+            return type("E", (), {"embed_query": lambda self, text: calls.append("embed")})()
+
+        @property
+        def cross_encoder(self):
+            raise RuntimeError("no model files")
+
+    cli._warm(Models())
+    assert calls == ["embed"]
