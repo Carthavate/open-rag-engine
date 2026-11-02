@@ -1,4 +1,5 @@
-using System.Diagnostics;
+using System.Net;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 
@@ -14,6 +15,7 @@ public sealed record AppPaths(string Root)
     public string WebView => Path.Combine(Root, "WebView2");
     public string Logs => Path.Combine(Root, "logs");
     public string EngineLog => Path.Combine(Logs, "engine.log");
+    public string LlmLog => Path.Combine(Logs, "llm.log");
     public string ErrorLog => Path.Combine(Logs, "errors.log");
 }
 
@@ -56,12 +58,42 @@ public static class SourceFiles
     public static bool CanOpen(string? path) => IsLocalDocumentPath(path) && File.Exists(path);
 }
 
-/// <summary>How to start the engine: a program, its base arguments, where to run it, and an optional config file.</summary>
-public sealed record EngineCommand(string FileName, IReadOnlyList<string> Arguments, string WorkingDirectory, string? ConfigPath)
+/// <summary>The language model an installed app brings along: llama.cpp's server and a GGUF model file.</summary>
+public sealed record LlmBundle(string ServerPath, string ModelPath)
 {
-    public IReadOnlyList<string> ServeArguments(string dataDirectory, int parentProcessId)
+    public const string ModelAlias = "qwen3-4b-instruct";
+
+    /// <summary>llama-server reads its key from here, so the key never shows on its command line.</summary>
+    public const string ApiKeyVariable = "LLAMA_API_KEY";
+
+    /// <summary>Loopback only, with its own key; the context matches the engine's default (8192 tokens).</summary>
+    public IReadOnlyList<string> Arguments(int port) =>
+        ["-m", ModelPath, "--host", "127.0.0.1", "--port", port.ToString(), "--ctx-size", "8192", "--jinja",
+         "--alias", ModelAlias, "--no-webui"];
+
+    public static int FreePort()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+        return port;
+    }
+}
+
+/// <summary>How to start the engine: a program, its base arguments, where to run it, an optional config file, and the
+/// bundled language model when there is one.</summary>
+public sealed record EngineCommand(string FileName, IReadOnlyList<string> Arguments, string WorkingDirectory, string? ConfigPath,
+    LlmBundle? Llm = null)
+{
+    /// <param name="llmUrl">The bundled language model's server, when the app runs one (an OpenAI-compatible /v1 URL).</param>
+    public IReadOnlyList<string> ServeArguments(string dataDirectory, int parentProcessId, string? llmUrl = null)
     {
         var args = new List<string>(Arguments) { "--data-dir", dataDirectory, "--parent-pid", parentProcessId.ToString(), "--warm" };
+        if (llmUrl is not null)
+        {
+            args.AddRange(["--llm-url", llmUrl]);
+        }
         if (ConfigPath is not null)
         {
             args.AddRange(["--config", ConfigPath]);
@@ -84,7 +116,10 @@ public static class EngineLocator
         if (File.Exists(python))
         {
             var config = Path.Combine(engine, "ore.toml");
-            return new EngineCommand(python, ["-m", "open_rag_engine", "serve"], engine, File.Exists(config) ? config : null);
+            var server = Path.Combine(engine, "llm", "llama-server.exe");
+            var model = Path.Combine(engine, "llm", "model.gguf");
+            var llm = File.Exists(server) && File.Exists(model) ? new LlmBundle(server, model) : null;
+            return new EngineCommand(python, ["-m", "open_rag_engine", "serve"], engine, File.Exists(config) ? config : null, llm);
         }
         if (!allowCheckout)
         {
@@ -110,168 +145,5 @@ public static class EngineLocator
     {
         var pyproject = Path.Combine(dir, "pyproject.toml");
         return File.Exists(pyproject) && File.ReadAllText(pyproject).Contains("name = \"open-rag-engine\"", StringComparison.Ordinal);
-    }
-}
-
-public sealed record EngineConnection(Uri BaseUrl);
-
-public sealed class EngineStartException(string message) : Exception(message);
-
-/// <summary>Runs the engine as a hidden child process, writes its output to a log, and reports the port it listens on.</summary>
-public sealed class EngineHost(EngineCommand command, IReadOnlyList<string> arguments, string logPath) : IAsyncDisposable
-{
-    private const int TailLines = 12;
-    private readonly Queue<string> _tail = new();
-    private readonly Lock _log = new();
-    private Process? _process;
-    private volatile bool _stopping;
-
-    /// <summary>Raised when the engine exits after it was ready (a crash, or killed from outside).</summary>
-    public event Action<int>? Exited;
-
-    /// <summary>Lets the app put the process in its job object, so the engine dies with the app.</summary>
-    public event Action<Process>? Started;
-
-    public async Task<EngineConnection> StartAsync(IReadOnlyDictionary<string, string> environment, TimeSpan timeout,
-        CancellationToken cancel = default)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
-        var info = new ProcessStartInfo(command.FileName)
-        {
-            WorkingDirectory = command.WorkingDirectory,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            StandardOutputEncoding = System.Text.Encoding.UTF8,
-            StandardErrorEncoding = System.Text.Encoding.UTF8,
-        };
-        foreach (var argument in arguments)
-        {
-            info.ArgumentList.Add(argument);
-        }
-        info.Environment["PYTHONUTF8"] = "1";
-        foreach (var (key, value) in environment)
-        {
-            info.Environment[key] = value;
-        }
-
-        var ready = new TaskCompletionSource<EngineConnection>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var process = new Process { StartInfo = info, EnableRaisingEvents = true };
-        process.OutputDataReceived += (_, e) =>
-        {
-            Write(e.Data);
-            if (ReadyLine.TryParsePort(e.Data) is { } port)
-            {
-                ready.TrySetResult(new EngineConnection(new Uri($"http://127.0.0.1:{port}/")));
-            }
-        };
-        process.ErrorDataReceived += (_, e) => Write(e.Data);
-        process.Exited += (_, _) =>
-        {
-            var code = SafeExitCode(process);
-            // A stop we asked for is not a crash, so it isn't reported.
-            if (!ready.TrySetException(new EngineStartException(FailureMessage(code))) && !_stopping)
-            {
-                Exited?.Invoke(code);
-            }
-        };
-
-        try
-        {
-            process.Start();
-        }
-        catch (System.ComponentModel.Win32Exception e)
-        {
-            throw new EngineStartException($"Couldn't start the engine ({command.FileName}): {e.Message}");
-        }
-        _process = process;
-        Started?.Invoke(process);
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
-
-        using var timer = CancellationTokenSource.CreateLinkedTokenSource(cancel);
-        timer.CancelAfter(timeout);
-        try
-        {
-            return await ready.Task.WaitAsync(timer.Token);
-        }
-        catch (OperationCanceledException) when (!cancel.IsCancellationRequested)
-        {
-            Stop();
-            throw new EngineStartException($"The engine didn't start within {timeout.TotalSeconds:0} seconds. {Tail()}");
-        }
-    }
-
-    public void Stop()
-    {
-        _stopping = true;
-        try
-        {
-            if (_process is { HasExited: false } process)
-            {
-                process.Kill(entireProcessTree: true);
-            }
-        }
-        catch (Exception e) when (e is InvalidOperationException or System.ComponentModel.Win32Exception)
-        {
-            // Already gone.
-        }
-    }
-
-    public async ValueTask DisposeAsync()
-    {
-        Stop();
-        if (_process is not null)
-        {
-            await _process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5)).ContinueWith(_ => { });
-            _process.Dispose();
-        }
-    }
-
-    private void Write(string? line)
-    {
-        if (line is null)
-        {
-            return;
-        }
-        lock (_log)
-        {
-            _tail.Enqueue(line);
-            while (_tail.Count > TailLines)
-            {
-                _tail.Dequeue();
-            }
-            try
-            {
-                File.AppendAllText(logPath, $"{DateTime.Now:HH:mm:ss} {line}{Environment.NewLine}");
-            }
-            catch (IOException)
-            {
-                // The log is a convenience; a locked file must not stop the engine.
-            }
-        }
-    }
-
-    private string Tail()
-    {
-        lock (_log)
-        {
-            return _tail.Count == 0 ? "" : "Last output:\n" + string.Join("\n", _tail);
-        }
-    }
-
-    private string FailureMessage(int code) => $"The engine stopped (exit code {code}) before it was ready. {Tail()}".Trim();
-
-    private static int SafeExitCode(Process process)
-    {
-        try
-        {
-            return process.ExitCode;
-        }
-        catch (InvalidOperationException)
-        {
-            return -1;
-        }
     }
 }

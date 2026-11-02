@@ -53,3 +53,8 @@ npm test
 
 - **Against a real engine in the browser:** start `ORE_API_TOKEN=<32+ chars> uv run ore serve --origin http://localhost:5176`, then open `http://localhost:5176/?api=http://127.0.0.1:<port>&token=<token>`.
 - **Live reload inside the app (Debug builds only):** set `OPENRAG_DEV_URL=http://localhost:5176` before starting `OpenRag.exe`.
+
+## Installer
+
+`installer/build.py` builds `OpenRag-Setup.exe`, a self-contained setup that brings its own Python, models and
+llama.cpp server, so it needs no internet after installing. See [installer/README.md](../installer/README.md).
