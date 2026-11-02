@@ -23,7 +23,7 @@ class LocalModels:
         _quiet_transformers()
         cfg = self._config.embeddings
         return HuggingFaceEmbeddings(
-            model_name=cfg.model,
+            model_name=self._config.model_path(cfg.model),
             model_kwargs={"device": "cpu"},
             encode_kwargs=_encode_kwargs(cfg.passage_prefix),
             query_encode_kwargs=_encode_kwargs(cfg.query_prefix),
@@ -32,7 +32,8 @@ class LocalModels:
     @cached_property
     def cross_encoder(self) -> HuggingFaceCrossEncoder:
         _quiet_transformers()
-        return HuggingFaceCrossEncoder(model_name=self._config.rerank.model, model_kwargs={"device": "cpu"})
+        model = self._config.model_path(self._config.rerank.model)
+        return HuggingFaceCrossEncoder(model_name=model, model_kwargs={"device": "cpu"})
 
     @cached_property
     def llm(self) -> BaseChatModel:
