@@ -36,16 +36,24 @@ public static partial class ReadyLine
     }
 }
 
-/// <summary>Which source files the app opens when a citation is clicked: documents only, by absolute path, that exist.</summary>
+/// <summary>Which source files the app opens when a citation is clicked: documents only, on a local drive, by absolute
+/// path, that exist. Network (UNC) and device paths are refused, so a request can never make Windows contact another
+/// computer, and alternate data streams (file.exe:x.txt) are refused, so nothing but a document is ever opened.</summary>
 public static class SourceFiles
 {
     private static readonly HashSet<string> Documents = new(StringComparer.OrdinalIgnoreCase) { ".pdf", ".md", ".markdown", ".txt" };
 
-    public static bool CanOpen(string? path) =>
+    public static bool IsLocalDocumentPath(string? path) =>
         !string.IsNullOrWhiteSpace(path)
+        && path.Length > 3
+        && char.IsAsciiLetter(path[0])
+        && path[1] == ':'
+        && path[2] is '\\' or '/'
+        && path.IndexOf(':', 2) < 0
         && Path.IsPathFullyQualified(path)
-        && Documents.Contains(Path.GetExtension(path))
-        && File.Exists(path);
+        && Documents.Contains(Path.GetExtension(path));
+
+    public static bool CanOpen(string? path) => IsLocalDocumentPath(path) && File.Exists(path);
 }
 
 /// <summary>How to start the engine: a program, its base arguments, where to run it, and an optional config file.</summary>
@@ -66,9 +74,10 @@ public static class EngineLocator
 {
     public const string EngineDirVariable = "OPENRAG_ENGINE_DIR";
 
-    /// <summary>The installed layout (a bundled Python next to the app) wins; otherwise a development checkout of
-    /// open-rag-engine, from <see cref="EngineDirVariable"/> or found above the app, run through uv.</summary>
-    public static EngineCommand? Find(string appDirectory, Func<string, string?> environment)
+    /// <summary>The installed layout (a bundled Python next to the app) wins. Only when <paramref name="allowCheckout"/> is
+    /// set (Debug builds) may it fall back to a development checkout of open-rag-engine, from
+    /// <see cref="EngineDirVariable"/> or found above the app, run through uv.</summary>
+    public static EngineCommand? Find(string appDirectory, Func<string, string?> environment, bool allowCheckout = true)
     {
         var engine = Path.Combine(appDirectory, "engine");
         var python = Path.Combine(engine, "python", "python.exe");
@@ -76,6 +85,10 @@ public static class EngineLocator
         {
             var config = Path.Combine(engine, "ore.toml");
             return new EngineCommand(python, ["-m", "open_rag_engine", "serve"], engine, File.Exists(config) ? config : null);
+        }
+        if (!allowCheckout)
+        {
+            return null;
         }
         var checkout = environment(EngineDirVariable) is { } dir && IsCheckout(dir) ? dir : FindCheckoutAbove(appDirectory);
         return checkout is null ? null : new EngineCommand("uv", ["run", "--project", checkout, "ore", "serve"], checkout, null);
@@ -111,6 +124,7 @@ public sealed class EngineHost(EngineCommand command, IReadOnlyList<string> argu
     private readonly Queue<string> _tail = new();
     private readonly Lock _log = new();
     private Process? _process;
+    private volatile bool _stopping;
 
     /// <summary>Raised when the engine exits after it was ready (a crash, or killed from outside).</summary>
     public event Action<int>? Exited;
@@ -156,7 +170,8 @@ public sealed class EngineHost(EngineCommand command, IReadOnlyList<string> argu
         process.Exited += (_, _) =>
         {
             var code = SafeExitCode(process);
-            if (!ready.TrySetException(new EngineStartException(FailureMessage(code))))
+            // A stop we asked for is not a crash, so it isn't reported.
+            if (!ready.TrySetException(new EngineStartException(FailureMessage(code))) && !_stopping)
             {
                 Exited?.Invoke(code);
             }
@@ -183,12 +198,14 @@ public sealed class EngineHost(EngineCommand command, IReadOnlyList<string> argu
         }
         catch (OperationCanceledException) when (!cancel.IsCancellationRequested)
         {
+            Stop();
             throw new EngineStartException($"The engine didn't start within {timeout.TotalSeconds:0} seconds. {Tail()}");
         }
     }
 
     public void Stop()
     {
+        _stopping = true;
         try
         {
             if (_process is { HasExited: false } process)

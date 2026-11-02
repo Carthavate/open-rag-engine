@@ -47,6 +47,8 @@ public class EngineProxyTests
     [InlineData("GET", "/library?x=1")]
     [InlineData(null, "/library")]
     [InlineData("GET", null)]
+    [InlineData("GET", "/library\n")]
+    [InlineData("POST", "/sections/ab/index\n")]
     public void Refuses_anything_else(string? method, string? path) => Assert.False(EngineProxy.IsAllowed(method, path));
 
     [Fact]
@@ -90,6 +92,63 @@ public class EngineProxyTests
         var (proxy, _) = Make(_ => Json(HttpStatusCode.Conflict, """{"detail":"Still indexing"}"""));
         var result = await proxy.StreamAsync("/ask", "{}", _ => Task.CompletedTask);
         Assert.Equal(new ProxyResponse(409, """{"detail":"Still indexing"}"""), result);
+    }
+
+    [Fact]
+    public async Task Questions_only_go_through_the_stream()
+    {
+        var (proxy, engine) = Make(_ => Json(HttpStatusCode.OK, "{}"));
+        Assert.Equal(400, (await proxy.SendAsync("POST", "/ask", "{}")).Status);
+        Assert.Equal(400, (await proxy.StreamAsync("/library", "{}", _ => Task.CompletedTask)).Status);
+        Assert.Empty(engine.Seen);
+    }
+
+    private sealed class BrokenStream : Stream
+    {
+        private bool _sent;
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => 0; set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            if (_sent)
+            {
+                throw new IOException("The response ended prematurely.");
+            }
+            _sent = true;
+            var line = Encoding.UTF8.GetBytes("{\"type\":\"token\",\"text\":\"Hi\"}\n");
+            line.CopyTo(buffer, offset);
+            return line.Length;
+        }
+    }
+
+    [Fact]
+    public async Task A_connection_lost_mid_answer_is_a_503_not_an_exception()
+    {
+        var (proxy, _) = Make(_ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(new BrokenStream()) });
+        var lines = new List<string>();
+        var result = await proxy.StreamAsync("/ask", "{}", line =>
+        {
+            lines.Add(line);
+            return Task.CompletedTask;
+        });
+        Assert.Equal(503, result.Status);
+        Assert.Single(lines);
+        Assert.Contains("prematurely", result.Body);
+    }
+
+    [Fact]
+    public void Problem_bodies_stay_valid_json_whatever_the_message()
+    {
+        var body = EngineProxy.Problem(503, "x", "line one\nline \"two\"").Body;
+        Assert.Equal("line one\nline \"two\"", System.Text.Json.JsonDocument.Parse(body).RootElement.GetProperty("detail").GetString());
     }
 
     [Fact]

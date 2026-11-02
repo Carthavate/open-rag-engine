@@ -10,6 +10,7 @@ import { TitleBar } from "./components/TitleBar";
 import { useChat } from "./hooks/useChat";
 import { useEngine } from "./hooks/useEngine";
 import { useLibrary } from "./hooks/useLibrary";
+import { clearChat } from "./lib/chats";
 import { host } from "./lib/host";
 import type { Category, DocumentInfo, Library, Scope, Section } from "./lib/types";
 
@@ -124,7 +125,10 @@ export default function App() {
       title: `Delete "${cat.name}"?`,
       body: "Only empty categories can be deleted. Your files are never touched.",
       action: "Delete",
-      onConfirm: () => void run((a) => a.deleteCategory(cat.id)),
+      onConfirm: async () => {
+        const deleted = await run(async (a) => (await a.deleteCategory(cat.id), true));
+        if (deleted) clearChat(localStorage, { kind: "category", id: cat.id });
+      },
     });
   const renameSection = (s: Section) =>
     setNameRequest({
@@ -139,7 +143,10 @@ export default function App() {
       title: `Delete "${s.name}"?`,
       body: "Its index and conversation are removed from Open RAG. Your files stay where they are.",
       action: "Delete",
-      onConfirm: () => void run((a) => a.deleteSection(s.id)),
+      onConfirm: async () => {
+        const deleted = await run(async (a) => (await a.deleteSection(s.id), true));
+        if (deleted) clearChat(localStorage, { kind: "section", id: s.id });
+      },
     });
   const addFolder = async (s: Section) => {
     const path = await host.pickFolder();

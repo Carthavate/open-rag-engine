@@ -28,7 +28,9 @@ public partial class MainWindow : Window
     private readonly ChildProcessJob? _job = CreateJob();
     private readonly string _token = Token.New();
     private readonly string? _devUrl = DevServerUrl();
-    private readonly HttpClient _http = new() { Timeout = Timeout.InfiniteTimeSpan };
+    // Loopback only, so never through a system proxy (and no WPAD lookups when offline). Timeouts are per request.
+    private readonly HttpClient _http = new(new SocketsHttpHandler { UseProxy = false }) { Timeout = Timeout.InfiniteTimeSpan };
+    private readonly SemaphoreSlim _lifecycle = new(1, 1);
     private readonly Dictionary<string, CancellationTokenSource> _asks = [];
     private EngineHost? _engine;
     private EngineProxy? _proxy;
@@ -73,22 +75,59 @@ public partial class MainWindow : Window
     private bool IsOwnPage(string url) =>
         Uri.TryCreate(url, UriKind.Absolute, out var uri) && string.Equals(uri.GetLeftPart(UriPartial.Authority), _origin, StringComparison.OrdinalIgnoreCase);
 
-    private async Task StartEngineAsync()
+    /// <summary>Checkout discovery runs `uv` from a source tree, so only developer (Debug) builds may use it.</summary>
+#if DEBUG
+    private const bool AllowCheckout = true;
+#else
+    private const bool AllowCheckout = false;
+#endif
+
+    /// <summary>Starts (or restarts) the engine. Serialised, so two clicks on "Try again" can't start two engines on the
+    /// same data.</summary>
+    private async Task StartEngineAsync(bool restart = false)
+    {
+        if (!await _lifecycle.WaitAsync(0))
+        {
+            return;
+        }
+        try
+        {
+            if (restart)
+            {
+                await StopEngineAsync();
+            }
+            await LaunchEngineAsync();
+        }
+        finally
+        {
+            _lifecycle.Release();
+        }
+    }
+
+    private async Task LaunchEngineAsync()
     {
         SetEngineState("starting");
-        var command = EngineLocator.Find(AppContext.BaseDirectory, Environment.GetEnvironmentVariable);
+        var command = EngineLocator.Find(AppContext.BaseDirectory, Environment.GetEnvironmentVariable, AllowCheckout);
         if (command is null)
         {
             SetEngineState("failed", "Open RAG couldn't find its engine. Reinstalling the app should fix this.");
             return;
         }
-        var engine = new EngineHost(command, command.ServeArguments(_paths.Data, Environment.ProcessId), _paths.EngineLog);
-        engine.Started += process => _job?.Add(process);
-        engine.Exited += code => Dispatcher.Invoke(() =>
-            SetEngineState("failed", $"The engine stopped unexpectedly (exit code {code}). Details are in {_paths.EngineLog}."));
-        _engine = engine;
         try
         {
+            var engine = new EngineHost(command, command.ServeArguments(_paths.Data, Environment.ProcessId), _paths.EngineLog);
+            engine.Started += process => _job?.Add(process);
+            // Only the current engine may report a crash; a late exit from a replaced one is ignored.
+            engine.Exited += code => Dispatcher.BeginInvoke(() =>
+            {
+                if (!ReferenceEquals(engine, _engine))
+                {
+                    return;
+                }
+                _proxy = null;
+                SetEngineState("failed", $"The engine stopped unexpectedly (exit code {code}). Details are in {_paths.EngineLog}.");
+            });
+            _engine = engine;
             var connection = await engine.StartAsync(new Dictionary<string, string> { ["ORE_API_TOKEN"] = _token }, EngineStartTimeout);
             _proxy = new EngineProxy(_http, connection.BaseUrl, _token);
             SetEngineState("ready");
@@ -97,17 +136,36 @@ public partial class MainWindow : Window
         {
             SetEngineState("failed", $"{e.Message}\n\nThe full log is in {_paths.EngineLog}.");
         }
+        catch (Exception e)
+        {
+            // Anything else (no permission to create the log folder, a blocked program) must not leave "starting" forever.
+            LogError(e);
+            SetEngineState("failed", $"Open RAG couldn't start its engine: {e.Message}\n\nDetails are in {_paths.ErrorLog}.");
+        }
     }
 
-    private async Task RestartEngineAsync()
+    private async Task StopEngineAsync()
     {
         _proxy = null;
-        if (_engine is not null)
+        var engine = _engine;
+        _engine = null;
+        if (engine is not null)
         {
-            await _engine.DisposeAsync();
-            _engine = null;
+            await engine.DisposeAsync();
         }
-        await StartEngineAsync();
+    }
+
+    private void LogError(Exception e)
+    {
+        try
+        {
+            Directory.CreateDirectory(_paths.Logs);
+            File.AppendAllText(_paths.ErrorLog, $"{DateTime.Now:u} {e}\n\n");
+        }
+        catch (Exception logError) when (logError is IOException or UnauthorizedAccessException)
+        {
+            Debug.WriteLine($"Couldn't write the error log: {logError.Message}");
+        }
     }
 
     private void SetEngineState(string state, string? message = null)
@@ -151,7 +209,11 @@ public partial class MainWindow : Window
         core.Settings.AreBrowserAcceleratorKeysEnabled = dev;
         core.Settings.AreDefaultContextMenusEnabled = dev;
         core.Settings.AreDevToolsEnabled = dev || Debugger.IsAttached;
-        core.SetVirtualHostNameToFolderMapping(AppHost, WebRoot, CoreWebView2HostResourceAccessKind.Allow);
+        core.Settings.AreHostObjectsAllowed = false;
+        core.Settings.IsWebMessageEnabled = true;
+        // The page gets no camera, microphone, location, clipboard reads or anything else it might ask for.
+        core.PermissionRequested += (_, e) => e.State = CoreWebView2PermissionState.Deny;
+        core.SetVirtualHostNameToFolderMapping(AppHost, WebRoot, CoreWebView2HostResourceAccessKind.DenyCors);
 
         // Only our own page may run here; anything else (a dropped file, a link) is refused.
         var start = dev ? _devUrl!.TrimEnd('/') + "/" : $"{_origin}/index.html";
@@ -192,13 +254,13 @@ public partial class MainWindow : Window
                     PickFolder(message.GetProperty("id").GetString());
                     break;
                 case "openSource":
-                    OpenSource(message.GetProperty("path").GetString(), reveal: false);
+                    await OpenSourceAsync(message.GetProperty("path").GetString(), reveal: false);
                     break;
                 case "revealSource":
-                    OpenSource(message.GetProperty("path").GetString(), reveal: true);
+                    await OpenSourceAsync(message.GetProperty("path").GetString(), reveal: true);
                     break;
                 case "restartEngine":
-                    await RestartEngineAsync();
+                    await StartEngineAsync(restart: true);
                     break;
                 case "api":
                     await ForwardAsync(message);
@@ -214,9 +276,10 @@ public partial class MainWindow : Window
                     break;
             }
         }
-        // An async void handler must not throw: tell the page instead of losing it.
-        catch (Exception ex) when (ex is JsonException or KeyNotFoundException or InvalidOperationException)
+        // An async void handler must never throw: log it and tell the page, instead of a crash dialog.
+        catch (Exception ex)
         {
+            LogError(ex);
             Post(new { type = "notice", message = $"Something went wrong: {ex.Message}" });
         }
     }
@@ -264,15 +327,25 @@ public partial class MainWindow : Window
     private static string? Body(JsonElement message) =>
         message.TryGetProperty("body", out var body) && body.ValueKind != JsonValueKind.Null ? body.GetRawText() : null;
 
-    private const string NotReady = """{"title":"Engine unavailable","status":503,"detail":"The engine isn't running."}""";
+    private static readonly ProxyResponse NotReady = EngineProxy.Problem(503, "Engine unavailable", "The engine isn't running.");
 
-    /// <summary>One API call from the page: forwarded with the token, answered with the status and raw JSON body.</summary>
+    /// <summary>One API call from the page: forwarded with the token, answered with the status and raw JSON body.
+    /// Whatever happens, the page gets an answer for its id, so it never waits forever.</summary>
     private async Task ForwardAsync(JsonElement message)
     {
         var id = message.GetProperty("id").GetString();
-        var result = _proxy is null
-            ? new ProxyResponse(503, NotReady)
-            : await _proxy.SendAsync(message.GetProperty("method").GetString() ?? "", message.GetProperty("path").GetString() ?? "", Body(message));
+        ProxyResponse result;
+        try
+        {
+            result = _proxy is not { } proxy
+                ? NotReady
+                : await proxy.SendAsync(message.GetProperty("method").GetString() ?? "", message.GetProperty("path").GetString() ?? "", Body(message));
+        }
+        catch (Exception e)
+        {
+            LogError(e);
+            result = EngineProxy.Problem(500, "Internal error", e.Message);
+        }
         Post(new { type = "apiResult", id, status = result.Status, body = result.Body });
     }
 
@@ -280,16 +353,16 @@ public partial class MainWindow : Window
     private async Task AskAsync(JsonElement message)
     {
         var id = message.GetProperty("id").GetString() ?? "";
-        if (_proxy is null)
+        if (_proxy is not { } proxy)
         {
-            Post(new { type = "askEnd", id, status = 503, body = NotReady });
+            Post(new { type = "askEnd", id, status = NotReady.Status, body = NotReady.Body });
             return;
         }
         using var cancel = new CancellationTokenSource();
         _asks[id] = cancel;
         try
         {
-            var result = await _proxy.StreamAsync("/ask", Body(message) ?? "{}", line =>
+            var result = await proxy.StreamAsync("/ask", Body(message) ?? "{}", line =>
             {
                 Post(new { type = "askLine", id, line });
                 return Task.CompletedTask;
@@ -299,6 +372,12 @@ public partial class MainWindow : Window
         catch (OperationCanceledException)
         {
             Post(new { type = "askEnd", id, status = 499, body = "" });
+        }
+        catch (Exception e)
+        {
+            LogError(e);
+            var failed = EngineProxy.Problem(500, "Internal error", e.Message);
+            Post(new { type = "askEnd", id, status = failed.Status, body = failed.Body });
         }
         finally
         {
@@ -313,11 +392,12 @@ public partial class MainWindow : Window
         Post(new { type = "folderPicked", id, path });
     }
 
-    /// <summary>Opens a cited document with its usual app, or shows it in Explorer. Only documents that exist, by absolute
-    /// path, are opened, so nothing the page sends can launch a program.</summary>
-    private void OpenSource(string? path, bool reveal)
+    /// <summary>Opens a cited document with its usual app, or shows it in Explorer. Only documents on a local drive that
+    /// exist, by absolute path, are opened, so nothing the page sends can launch a program or reach another computer.
+    /// The check touches the disk, so it runs off the UI thread.</summary>
+    private async Task OpenSourceAsync(string? path, bool reveal)
     {
-        if (!SourceFiles.CanOpen(path))
+        if (!SourceFiles.IsLocalDocumentPath(path) || !await Task.Run(() => SourceFiles.CanOpen(path)))
         {
             Post(new { type = "notice", message = "That file isn't there anymore. Re-index the section to update it." });
             return;
@@ -327,7 +407,7 @@ public partial class MainWindow : Window
         {
             if (reveal)
             {
-                Process.Start("explorer.exe", $"/select,\"{full}\"");
+                Process.Start(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe"), $"/select,\"{full}\"");
             }
             else
             {
@@ -347,10 +427,7 @@ public partial class MainWindow : Window
         {
             ask.Cancel();
         }
-        if (_engine is not null)
-        {
-            await _engine.DisposeAsync();
-        }
+        await StopEngineAsync();
         _http.Dispose();
         _job?.Dispose();
     }
