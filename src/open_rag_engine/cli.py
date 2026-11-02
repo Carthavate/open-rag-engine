@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import os
+import socket
 import sys
+import threading
+import time
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -15,6 +19,7 @@ from .config import EngineConfig, load_config
 from .conversation import Turn
 from .engine import Engine
 from .ingest import IndexMismatchError
+from .offline import go_offline_if_possible, quiet_and_private
 from .pipeline import RetrievalResult
 
 app = typer.Typer(
@@ -27,8 +32,9 @@ DEFAULT_CONFIG = Path("ore.toml")
 
 
 @app.callback()
-def _utf8_output() -> None:
-    """Write UTF-8 even when Windows pipes stdout with a legacy code page, so accents and units survive."""
+def _startup() -> None:
+    """Private, quiet, UTF-8 output. Runs before any command loads a model."""
+    quiet_and_private()
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure is not None:
@@ -50,6 +56,7 @@ TraceOpt = Annotated[bool, typer.Option("--trace", help="Show what every pipelin
 
 
 def build_engine(config: EngineConfig) -> Engine:
+    go_offline_if_possible([config.embeddings.model, config.rerank.model])
     return Engine.from_config(config)
 
 
@@ -229,6 +236,63 @@ def info(config: ConfigOpt = None, collection: CollectionOpt = None) -> None:
         )
 
     _run(action)
+
+
+TOKEN_VARIABLE = "ORE_API_TOKEN"
+
+
+@app.command()
+def serve(
+    port: Annotated[int, typer.Option(help="Port on 127.0.0.1; 0 picks a free one.")] = 0,
+    origin: Annotated[list[str] | None, typer.Option(help="Web origin allowed to call the API.")] = None,
+    parent_pid: Annotated[int | None, typer.Option(help="Exit when this process exits.")] = None,
+    config: ConfigOpt = None,
+) -> None:
+    """Run the local API for the desktop app. Prints `ORE_READY port=<n>` once it listens."""
+
+    def action():
+        token = os.environ.get(TOKEN_VARIABLE, "")
+        if len(token) < 32:
+            raise ValueError(f"Set {TOKEN_VARIABLE} to a random secret of at least 32 characters.")
+        cfg = _config(config)
+        go_offline_if_possible([cfg.embeddings.model, cfg.rerank.model])
+        from .api import create_app
+        from .factory import LocalModels
+        from .library import Library
+
+        api = create_app(Library(cfg, LocalModels(cfg)), token, origin or ["https://app.ore"])
+        server = _listen(port)
+        typer.echo(f"ORE_READY port={server.getsockname()[1]}")
+        sys.stdout.flush()
+        if parent_pid:
+            threading.Thread(target=_exit_with_parent, args=(parent_pid,), daemon=True).start()
+        import uvicorn
+
+        uvicorn.Server(uvicorn.Config(api, log_level="warning", access_log=False)).run(sockets=[server])
+
+    _run(action)
+
+
+def _listen(port: int) -> socket.socket:
+    """Bind to loopback only. The socket is handed to uvicorn, so the chosen port is known before it starts."""
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind(("127.0.0.1", port))
+    return server
+
+
+def _exit_with_parent(pid: int) -> None:
+    """Backstop for the app's job object: if the app disappears, the engine must not linger."""
+    if sys.platform == "win32":
+        import ctypes
+
+        synchronize, infinite = 0x00100000, 0xFFFFFFFF
+        handle = ctypes.windll.kernel32.OpenProcess(synchronize, False, pid)
+        if handle:
+            ctypes.windll.kernel32.WaitForSingleObject(handle, infinite)
+    else:
+        while os.getppid() == pid:
+            time.sleep(2)
+    os._exit(0)
 
 
 def _echo_token(token: str) -> None:

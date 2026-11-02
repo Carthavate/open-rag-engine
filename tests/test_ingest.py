@@ -60,3 +60,31 @@ def test_a_different_index_configuration_needs_a_rebuild(corpus: Path, config):
         _ingest([corpus], changed, store)
     _, report = _ingest([corpus], changed, store, rebuild=True)
     assert len(report.added) == 5 and len(store.chunks()) == 5
+
+
+def test_prune_removes_documents_whose_files_are_gone(corpus: Path, config):
+    store, _ = _ingest([corpus], config)
+    (corpus / "winter.md").unlink()
+    splitter = make_splitter(config.chunking, embeddings=None)
+    report = ingest([corpus], store, splitter, config.index_fingerprint(), prune=True)
+    assert [Path(s).name for s in report.removed] == ["winter.md"]
+    assert len(store.chunks()) == 4 and len(store.vectors.get()["ids"]) == 4
+
+
+def test_prune_with_no_paths_empties_the_collection(corpus: Path, config):
+    store, _ = _ingest([corpus], config)
+    report = ingest([], store, make_splitter(config.chunking, None), config.index_fingerprint(), prune=True)
+    assert len(report.removed) == 5 and store.chunks() == []
+
+
+def test_progress_is_reported_per_file(corpus: Path, config):
+    seen: list[tuple[int, int]] = []
+    store = _store(config)
+    ingest(
+        [corpus],
+        store,
+        make_splitter(config.chunking, None),
+        config.index_fingerprint(),
+        on_progress=lambda done, total, source: seen.append((done, total)),
+    )
+    assert seen == [(1, 5), (2, 5), (3, 5), (4, 5), (5, 5)]

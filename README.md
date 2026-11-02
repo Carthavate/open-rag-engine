@@ -47,6 +47,8 @@ Der Drucksensor PS-12 kostet 39 Euro [1].
 | Cited answers that are checked, and abstention | `answer.py` | `[answer] min_rerank_score` |
 | Retrieval evaluation (hit rate, MRR, recall) | `evaluation.py` | `ore eval` |
 
+`ore serve` runs the same engine as a local API for the desktop app (categories, sections, background indexing, streamed answers), reachable only from this machine. See [ADR-0007](docs/adr/0007-desktop-app.md).
+
 Every setting lives in [`ore.toml`](examples/ore.toml). `--trace` shows what each stage returned and how long it took.
 
 ## What it will do

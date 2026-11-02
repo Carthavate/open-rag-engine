@@ -54,6 +54,8 @@ class RerankConfig(_Section):
 
 
 class LLMConfig(_Section):
+    provider: Literal["ollama", "openai"] = "ollama"
+    """`openai` means any OpenAI-compatible server, such as llama.cpp's `llama-server` bundled with the desktop app."""
     model: str = "qwen3:4b-instruct-2507-q4_K_M"
     base_url: str = "http://localhost:11434"
     temperature: float = Field(0.0, ge=0, le=2)
