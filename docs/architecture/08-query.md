@@ -15,7 +15,7 @@ flowchart TB
     subgraph retrieve ["Slot 3, retrieve: in parallel, filters applied inside each search"]
         lexical["<b>Lexical</b><br/>BM25"]:::retr
         dense["<b>Dense</b><br/>Vector search"]:::retr
-        glocal["<b>Graph, local</b><br/>Entities in the question,<br/>their neighbourhood, its chunks"]:::retr
+        glocal["<b>Graph, local</b><br/>Entities in the question seed<br/>Personalized PageRank; chunks ranked"]:::retr
         gglobal["<b>Graph, global</b><br/>Relevant communities,<br/>the chunks behind them"]:::retr
         visual["<b>Visual, optional</b><br/>Page images"]:::optional
     end
@@ -66,7 +66,7 @@ flowchart TB
 |----------|--------------------------|----------------------|
 | `direct` | Lookup questions | Lexical and dense retrieval, single query, all later slots |
 | `multi_query` | Multi-hop or comparison questions, or low retrieval confidence on a first pass | Adds query variants in slot 2 and graph-local retrieval |
-| `graph_global` | Global or summary questions | Graph-global retrieval over community summaries; packs the chunks behind the best communities, with summaries only as orientation for the model, never as citable sources |
+| `graph_global` | Global or summary questions | Graph-global retrieval over communities, summarised lazily within a fixed budget; packs the chunks behind the best communities, with summaries only as orientation for the model, never as citable sources. Because global graph search is known to hallucinate on unanswerable questions, its answers always go through the abstention check |
 | `retrieve_only` | The `retrieve` operation, or no LLM backend configured | Slots 0 to 7; returns passages instead of an answer |
 | `auto` (default) | | The router chooses from the question class |
 | *agentic (later)* | Questions needing several dependent lookups | A planner loops over slots 2 to 7 as a tool, within a step, token and time budget, then runs 8 to 10 once |

@@ -51,6 +51,7 @@ Datasets are versioned. A case records its question, language, expected source c
 | Retrieval | Recall@k, MRR, nDCG@k | Against expected source chunks. Computed **per stage**: after each retriever, after fusion, after reranking, after diversification and in the packed context, using the trace |
 | Answer | Faithfulness | Share of statements supported by their cited passages (support checker) |
 | | Citation precision and recall | Precision: share of citations that support their statement. Recall: share of statements that carry a supporting citation |
+| | Citation reliance (nightly) | On a sample, remove the cited passage and regenerate. If the statement survives unchanged, the citation was decorative rather than used. Research shows correct-looking citations are often post-rationalised ([evaluation research](../research/evaluation.md#citation-evaluation)) |
 | | Correctness | Against the reference answer, when there is one: LLM judge, with token-overlap and semantic-similarity scores reported alongside |
 | | Abstention accuracy | Abstains on unanswerable cases, answers the answerable ones |
 | | Language match | The answer is in the question's language |
@@ -62,7 +63,8 @@ Datasets are versioned. A case records its question, language, expected source c
 ## Judges
 
 - **Deterministic metrics first.** Anything that can be computed without a model (retrieval metrics, citation existence, language match, latency) is.
-- **Model judges are calibrated.** The judge and support checker are scored against a small human-labelled set, and their agreement is reported with every run.
+- **Model judges are calibrated.** The judge and the support checker are scored against a small human-labelled set (100 to 200 cases per language slice where possible), and their chance-corrected agreement (Cohen's kappa, not raw agreement) is reported with every run.
+- **Pairwise judgements are position-swapped**, so a judge's preference for the first or second answer cancels out.
 - **The judge is never the generator.** Using the same model to answer and to grade inflates scores, so the configuration rejects it.
 - **Local by default, stronger on request.** A small local judge keeps evaluation free; a hosted judge with the operator's own key is an option for release benchmarks. The judge's identity is part of the run fingerprint.
 
