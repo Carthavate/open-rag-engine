@@ -54,6 +54,8 @@ class RerankConfig(_Section):
 
 
 class LLMConfig(_Section):
+    provider: Literal["ollama", "openai"] = "ollama"
+    """`openai` means any OpenAI-compatible server, such as llama.cpp's `llama-server` bundled with the desktop app."""
     model: str = "qwen3:4b-instruct-2507-q4_K_M"
     base_url: str = "http://localhost:11434"
     temperature: float = Field(0.0, ge=0, le=2)
@@ -71,6 +73,9 @@ class AnswerConfig(_Section):
 
 class EngineConfig(_Section):
     data_dir: Path = Path(".ore")
+    models_dir: Path | None = None
+    """Bundled model folders, named like the model with "/" as "--" (intfloat--multilingual-e5-small). A model found
+    there loads from it; the configured model name, and so the index fingerprint, stays the same."""
     collection: str = Field("default", pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{1,61}[A-Za-z0-9]$")
     chunking: ChunkingConfig = ChunkingConfig()
     embeddings: EmbeddingConfig = EmbeddingConfig()
@@ -91,7 +96,15 @@ class EngineConfig(_Section):
 
     def fingerprint(self) -> str:
         """Identifies the whole configuration, for reproducible evaluation runs (driver D-07)."""
-        return _digest(self.model_dump_json(exclude={"data_dir"}))
+        return _digest(self.model_dump_json(exclude={"data_dir", "models_dir"}))
+
+    def model_path(self, model: str) -> str:
+        """Where to load a Hugging Face model from: its bundled folder when there is one, else its name."""
+        if self.models_dir is not None:
+            folder = self.models_dir / model.replace("/", "--")
+            if folder.is_dir():
+                return str(folder)
+        return model
 
 
 def _digest(text: str) -> str:
@@ -105,4 +118,8 @@ def load_config(path: Path | None) -> EngineConfig:
     if not path.is_file():
         raise FileNotFoundError(f"Configuration file not found: {path}")
     with path.open("rb") as handle:
-        return EngineConfig.model_validate(tomllib.load(handle))
+        data = tomllib.load(handle)
+    # A relative models_dir is relative to the configuration file, so a bundled engine works wherever it is installed.
+    if isinstance(data.get("models_dir"), str) and not Path(data["models_dir"]).is_absolute():
+        data["models_dir"] = str(path.resolve().parent / data["models_dir"])
+    return EngineConfig.model_validate(data)

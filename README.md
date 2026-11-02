@@ -10,7 +10,11 @@ We just finished a full course on retrieval-augmented generation and built a sma
 
 ## Try it
 
-You need Python 3.12+, [uv](https://docs.astral.sh/uv/) and [Ollama](https://ollama.com/).
+**On Windows, without installing anything else:** download Open RAG, the desktop app, from the
+[latest release](https://github.com/Carthavate/open-rag-engine/releases/latest). Put the `.exe` and its `.bin` parts in
+one folder and run the `.exe`. It brings its own models and works offline.
+
+**From source:** you need Python 3.12+, [uv](https://docs.astral.sh/uv/) and [Ollama](https://ollama.com/).
 
 ```bash
 uv sync
@@ -46,6 +50,8 @@ Der Drucksensor PS-12 kostet 39 Euro [1].
 | Conversational follow-ups | `conversation.py` | `ore chat` |
 | Cited answers that are checked, and abstention | `answer.py` | `[answer] min_rerank_score` |
 | Retrieval evaluation (hit rate, MRR, recall) | `evaluation.py` | `ore eval` |
+
+`ore serve` runs the same engine as a local API for the desktop app (categories, sections, background indexing, streamed answers), reachable only from this machine. See [ADR-0007](docs/adr/0007-desktop-app.md).
 
 Every setting lives in [`ore.toml`](examples/ore.toml). `--trace` shows what each stage returned and how long it took.
 
@@ -86,5 +92,7 @@ We review each other's work through pull requests. See [CONTRIBUTING.md](CONTRIB
 
 ## Team
 
-- [Wadi](https://github.com/TWadi)
-- [Ghassen](https://github.com/GhassenJamoussi99)
+Open RAG is developed by:
+
+- Wadi Touil: [GitHub](https://github.com/TWadi) · [LinkedIn](https://www.linkedin.com/in/wadi-touil-117472319/)
+- Ghassen Jamoussi: [GitHub](https://github.com/GhassenJamoussi99) · [LinkedIn](https://www.linkedin.com/in/ghassen-jamoussi/)

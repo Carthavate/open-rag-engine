@@ -1,0 +1,58 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\OpenRag.Core\OpenRag.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>OpenRag</AssemblyName>
+    <AssemblyTitle>Open RAG</AssemblyTitle>
+    <Product>Open RAG</Product>
+    <Authors>Wadi Touil; Ghassen Jamoussi</Authors>
+    <Company>Carthavate</Company>
+    <Copyright>Copyright (C) 2026 Wadi Touil and Ghassen Jamoussi</Copyright>
+    <Version>0.1.0</Version>
+    <ApplicationIcon>Assets\OpenRag.ico</ApplicationIcon>
+    <WebRoot>$(MSBuildThisFileDirectory)..\..\web\</WebRoot>
+  </PropertyGroup>
+
+  <!-- The window's title-bar and taskbar icon. Made by desktop/tools/make_icon.py. -->
+  <ItemGroup>
+    <Resource Include="Assets\OpenRag.ico" />
+  </ItemGroup>
+
+  <!-- The interface is a React app in desktop/web. Build it when it has never been built, and always for Release. -->
+  <Target Name="BuildWeb" BeforeTargets="BeforeBuild" Condition="'$(Configuration)' == 'Release' Or !Exists('$(WebRoot)dist\index.html')">
+    <Exec Command="npm ci" WorkingDirectory="$(WebRoot)" Condition="!Exists('$(WebRoot)node_modules')" />
+    <Exec Command="npm run build" WorkingDirectory="$(WebRoot)" />
+  </Target>
+
+  <!-- Items are read here, at copy time, so files from a build that just happened are included. -->
+  <Target Name="CopyWeb" AfterTargets="Build">
+    <ItemGroup>
+      <WebFiles Include="$(WebRoot)dist\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(WebFiles)" DestinationFiles="@(WebFiles->'$(OutDir)wwwroot\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
+
+  <!-- dotnet publish only takes files it knows about, so hand it the interface too. -->
+  <Target Name="PublishWeb" AfterTargets="ComputeResolvedFilesToPublishList">
+    <ItemGroup>
+      <PublishedWebFiles Include="$(WebRoot)dist\**\*" />
+      <ResolvedFileToPublish Include="@(PublishedWebFiles->'%(FullPath)')" Exclude="@(ResolvedFileToPublish)">
+        <RelativePath>wwwroot\%(RecursiveDir)%(Filename)%(Extension)</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
+
+</Project>

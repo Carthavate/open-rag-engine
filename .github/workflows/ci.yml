@@ -24,3 +24,29 @@ jobs:
           uv run ruff format --check src tests
       - name: Test
         run: uv run pytest --cov --cov-report=term --cov-fail-under=80
+
+  desktop:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: desktop/web/package-lock.json
+      - name: Interface
+        working-directory: desktop/web
+        run: |
+          npm ci
+          npx tsc -b
+          npx eslint .
+          npx vitest run
+          npm run build
+      - name: App and tests
+        run: dotnet test OpenRag.slnx -c Release

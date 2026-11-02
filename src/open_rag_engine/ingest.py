@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -32,11 +32,28 @@ class IngestReport:
     unchanged: list[str] = field(default_factory=list)
     failed: list[tuple[str, str]] = field(default_factory=list)
     chunks_added: int = 0
+    removed: list[str] = field(default_factory=list)
+
+
+Progress = Callable[[int, int, str], None]
+"""Called after each file with (files done, files in total, source path)."""
 
 
 def ingest(
-    paths: Iterable[Path], store: ChunkStore, splitter: Splitter, index_fingerprint: str, rebuild: bool = False
+    paths: Iterable[Path],
+    store: ChunkStore,
+    splitter: Splitter,
+    index_fingerprint: str,
+    rebuild: bool = False,
+    prune: bool = False,
+    on_progress: Progress | None = None,
+    keep: Sequence[str] = (),
 ) -> IngestReport:
+    """Index the files under `paths`.
+
+    With `prune`, documents that are no longer under `paths` leave the index, except those under a folder in
+    `keep` (for example a USB drive that is unplugged right now).
+    """
     files = discover(paths)
     stored = store.manifest().index_fingerprint
     if rebuild:
@@ -52,25 +69,46 @@ def ingest(
     unchanged: list[str] = []
     failed: list[tuple[str, str]] = []
     chunks_added = 0
-    for path in files:
+    outcomes: dict[str, list[str]] = {"added": added, "updated": updated, "unchanged": unchanged}
+    for done, path in enumerate(files, start=1):
         source = path.as_posix()
-        doc_id = content_hash(path.read_bytes())
-        previous = store.manifest().documents.get(source)
-        if previous == doc_id:
-            unchanged.append(source)
-            continue
-        try:
-            chunks = _chunk(load(path), splitter, doc_id, index_fingerprint)
-        except Exception as error:  # one unreadable file must not stop the batch
-            log.warning("Could not ingest %s: %s", source, error)
-            failed.append((source, str(error)))
-            continue
-        if previous is not None:
-            store.remove(source)
-        store.add(source, doc_id, chunks, index_fingerprint)
-        (updated if previous is not None else added).append(source)
-        chunks_added += len(chunks)
-    return IngestReport(added, updated, unchanged, failed, chunks_added)
+        outcome, count, error = _ingest_file(path, source, store, splitter, index_fingerprint)
+        if error is not None:
+            failed.append((source, error))
+        else:
+            outcomes[outcome].append(source)
+        chunks_added += count
+        if on_progress:
+            on_progress(done, len(files), source)
+
+    removed: list[str] = []
+    if prune:
+        present = {path.as_posix() for path in files}
+        kept = tuple(folder.rstrip("/") + "/" for folder in keep)
+        for source in store.manifest().documents:
+            if source not in present and not source.startswith(kept):
+                store.remove(source)
+                removed.append(source)
+    return IngestReport(added, updated, unchanged, failed, chunks_added, removed)
+
+
+def _ingest_file(
+    path: Path, source: str, store: ChunkStore, splitter: Splitter, index_fingerprint: str
+) -> tuple[str, int, str | None]:
+    """Index one file unless it is unchanged: (outcome, chunks added, error message or None)."""
+    doc_id = content_hash(path.read_bytes())
+    previous = store.manifest().documents.get(source)
+    if previous == doc_id:
+        return "unchanged", 0, None
+    try:
+        chunks = _chunk(load(path), splitter, doc_id, index_fingerprint)
+    except Exception as error:  # one unreadable file must not stop the batch
+        log.warning("Could not ingest %s: %s", source, error)
+        return "failed", 0, str(error)
+    if previous is not None:
+        store.remove(source)
+    store.add(source, doc_id, chunks, index_fingerprint)
+    return ("updated" if previous is not None else "added"), len(chunks), None
 
 
 def _chunk(documents: list[Document], splitter: Splitter, doc_id: str, index_fingerprint: str) -> list[Document]:

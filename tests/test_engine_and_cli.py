@@ -105,3 +105,34 @@ def test_querying_with_a_changed_index_configuration_asks_for_a_rebuild(monkeypa
     changed = config.updated("chunking", chunk_size=300)
     result = run_cli(monkeypatch, changed, "search", "pump")
     assert result.exit_code == 1 and "--rebuild" in result.output
+
+
+def test_serve_refuses_to_start_without_a_strong_token(monkeypatch):
+    monkeypatch.delenv("ORE_API_TOKEN", raising=False)
+    result = CliRunner().invoke(cli.app, ["serve"])
+    assert result.exit_code == 1 and "ORE_API_TOKEN" in result.output
+
+
+def test_listen_binds_loopback_on_a_free_port():
+    server = cli._listen(0)
+    try:
+        host, port = server.getsockname()
+        assert host == "127.0.0.1" and port > 0
+    finally:
+        server.close()
+
+
+def test_warm_up_loads_both_models_and_never_raises():
+    calls = []
+
+    class Models:
+        @property
+        def embeddings(self):
+            return type("E", (), {"embed_query": lambda self, text: calls.append("embed")})()
+
+        @property
+        def cross_encoder(self):
+            raise RuntimeError("no model files")
+
+    cli._warm(Models())
+    assert calls == ["embed"]
