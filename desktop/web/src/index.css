@@ -1,0 +1,175 @@
+@import "tailwindcss";
+@import "@fontsource/lilita-one/400.css";
+@import "@fontsource/atkinson-hyperlegible/400.css";
+@import "@fontsource/atkinson-hyperlegible/700.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+@import "@fontsource/ibm-plex-mono/600.css";
+
+/* The AI Engineering Arena's "sticker arcade" theme: chunky ink outlines, hard offset shadows, candy accents on a
+   dot grid. Same tokens as the Arena site (ai-eng-lab/site/src/styles.css), with its dark variant. Fonts are bundled,
+   so the app looks the same offline. */
+:root {
+  --bg: #eaf2ff;
+  --dots: #c9d8f5;
+  --card: #ffffff;
+  --card-2: #f5f8ff;
+  --ink: #17183a;
+  --muted: #5d6290;
+  --edge: #17183a;
+  --shadow: #17183a;
+  --cobalt: #3f5bff;
+  --tomato: #ff6b4a;
+  --mint: #18b98d;
+  --sun: #ffc83d;
+  --pink: #ff7eb6;
+  --on-accent: #ffffff;
+  --done-bg: #dcf7ee;
+  --error: #d6362b;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121429;
+    --dots: #23264a;
+    --card: #1d2042;
+    --card-2: #262a52;
+    --ink: #f2f3ff;
+    --muted: #a3a8d6;
+    --edge: #05061a;
+    --shadow: #05061a;
+    --cobalt: #6f86ff;
+    --tomato: #ff8466;
+    --mint: #3fd9ac;
+    --sun: #ffd25e;
+    --pink: #ff96c4;
+    --on-accent: #10112a;
+    --done-bg: #183a35;
+    --error: #ff8a7a;
+    color-scheme: dark;
+  }
+}
+
+@theme inline {
+  --font-sans: "Atkinson Hyperlegible", "Segoe UI", system-ui, sans-serif;
+  --font-display: "Lilita One", "Arial Rounded MT Bold", "Trebuchet MS", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+  --color-bg: var(--bg);
+  --color-dots: var(--dots);
+  --color-card: var(--card);
+  --color-card-2: var(--card-2);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--muted);
+  --color-ink-3: color-mix(in srgb, var(--muted) 72%, transparent);
+  --color-edge: var(--edge);
+  --color-line: color-mix(in srgb, var(--muted) 30%, transparent);
+  --color-fill: var(--card-2);
+  --color-accent: var(--cobalt);
+  --color-accent-tint: color-mix(in srgb, var(--cobalt) 14%, var(--card));
+  --color-on-accent: var(--on-accent);
+  --color-good: var(--mint);
+  --color-done: var(--done-bg);
+  --color-warn: var(--sun);
+  --color-warn-tint: color-mix(in srgb, var(--sun) 28%, var(--card));
+  --color-bad: var(--error);
+  --color-bad-tint: color-mix(in srgb, var(--tomato) 16%, var(--card));
+  --color-tomato: var(--tomato);
+  --color-sun: var(--sun);
+  --color-mint: var(--mint);
+  --color-pink: var(--pink);
+  --color-cobalt: var(--cobalt);
+}
+
+/* A card with the Arena's outline and hard shadow. */
+@utility sticker {
+  background: var(--card);
+  border: 2.5px solid var(--edge);
+  border-radius: 16px;
+  box-shadow: 4px 4px 0 var(--shadow);
+}
+
+@utility sticker-sm {
+  background: var(--card);
+  border: 2px solid var(--edge);
+  border-radius: 12px;
+  box-shadow: 2px 2px 0 var(--shadow);
+}
+
+/* Pressable stickers lift on hover and sink when clicked, like the Arena's buttons. */
+@utility press {
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.12s ease;
+  &:hover {
+    transform: translate(-1px, -1px);
+    box-shadow: 4px 4px 0 var(--shadow);
+  }
+  &:active {
+    transform: translate(2px, 2px);
+    box-shadow: 1px 1px 0 var(--shadow);
+  }
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  background-color: var(--bg);
+  background-image: radial-gradient(var(--dots) 1.4px, transparent 1.6px);
+  background-size: 22px 22px;
+  color: var(--ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: 0.01em;
+}
+
+:focus-visible {
+  outline: 3px solid var(--cobalt);
+  outline-offset: 2px;
+}
+
+textarea,
+input,
+.selectable {
+  user-select: text;
+}
+
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--muted) 45%, transparent);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@keyframes pop-in {
+  from {
+    transform: scale(0.9) rotate(-2deg);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}

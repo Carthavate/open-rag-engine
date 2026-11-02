@@ -221,3 +221,9 @@ __marimo__/
 
 # open-rag-engine local data
 .ore/
+
+# Desktop app build output
+desktop/**/bin/
+desktop/**/obj/
+desktop/web/node_modules/
+desktop/web/dist/
