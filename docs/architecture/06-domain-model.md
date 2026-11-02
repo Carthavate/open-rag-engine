@@ -69,7 +69,7 @@ classDiagram
     class Community {
         id
         level
-        summary
+        summary_if_generated
         stale
     }
 
@@ -150,7 +150,7 @@ An answer's `support_status` is `supported`, `partially_supported` or `abstained
 | I-04 | **Answers only cite what the model saw.** A citation must reference a chunk in the packed context recorded in that answer's trace. Verification removes anything else. |
 | I-05 | **Graph results resolve to chunks.** Entities, relations and communities link to the chunks that support them. Community summaries are generated text, so an answer never cites a summary; it cites the chunks behind it. |
 | I-06 | **Every record carries tenant and access fields.** In v1 they hold defaults (one tenant, open access), so turning on permissions later needs no data migration. |
-| I-07 | **IDs come from content where possible.** A chunk's ID is a hash of its document version, its source spans and the chunker configuration, so re-ingesting the same content changes nothing. |
+| I-07 | **IDs come from content where possible.** A chunk's ID is a hash of its document version, its source spans and the chunker configuration, so re-ingesting the same content changes nothing. The ID scheme itself is versioned and part of the generation fingerprint: changing it builds a new generation, never silently invalidates an existing one (a lesson from [Haystack 3.0](../research/haystack.md#gaps)). |
 
 ## Index generations
 
