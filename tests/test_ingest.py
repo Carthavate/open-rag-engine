@@ -3,10 +3,13 @@ from pathlib import Path
 import pytest
 
 from open_rag_engine.chunking import make_splitter
-from open_rag_engine.ingest import IndexMismatchError, ingest
+from open_rag_engine.ingest import IndexMismatchError, IngestReport, ingest
+from open_rag_engine.pipeline import RetrievalPipeline
 from open_rag_engine.store import ChunkStore
 
 from .conftest import HashEmbeddings
+
+VALVE = "The pressure relief valve opens at six bar."
 
 
 def _store(config) -> ChunkStore:
@@ -88,3 +91,71 @@ def test_progress_is_reported_per_file(corpus: Path, config):
         on_progress=lambda done, total, source: seen.append((done, total)),
     )
     assert seen == [(1, 5), (2, 5), (3, 5), (4, 5), (5, 5)]
+
+
+def _update(folder: Path, config, store: ChunkStore) -> IngestReport:
+    """What the app's Update button does: index the folder and drop files that are gone."""
+    return ingest([folder], store, make_splitter(config.chunking, None), config.index_fingerprint(), prune=True)
+
+
+def _names(sources) -> set[str]:
+    return {Path(str(source)).name for source in sources}
+
+
+def _vector_files(store: ChunkStore) -> set[str]:
+    return _names(meta["source"] for meta in store.vectors.get()["metadatas"])
+
+
+@pytest.fixture
+def twins(corpus: Path) -> Path:
+    """Two byte-identical files, as when a document is saved twice. They share chunk IDs, so Chroma holds one copy."""
+    (corpus / "valve.md").write_text(VALVE, encoding="utf-8")
+    (corpus / "valve copy.md").write_text(VALVE, encoding="utf-8")
+    return corpus
+
+
+@pytest.mark.parametrize(("deleted", "kept"), [("valve.md", "valve copy.md"), ("valve copy.md", "valve.md")])
+def test_deleting_one_of_two_identical_files_keeps_the_other(twins: Path, config, deleted: str, kept: str):
+    store, _ = _ingest([twins], config)
+    (twins / deleted).unlink()
+    report = _update(twins, config, store)
+    assert _names(report.removed) == {deleted}
+    assert kept in _names(store.manifest().documents) and deleted not in _names(store.manifest().documents)
+    assert kept in _names(c.metadata["source"] for c in store.chunks())
+    assert deleted not in _names(c.metadata["source"] for c in store.chunks())
+    # A citation must never name the deleted file, whichever copy Chroma's shared vector was labelled with.
+    assert kept in _vector_files(store) and deleted not in _vector_files(store)
+
+
+def test_update_keeps_working_after_removing_a_copy(twins: Path, config):
+    store, _ = _ingest([twins], config)
+    (twins / "valve copy.md").unlink()
+    _update(twins, config, store)
+    report = _update(twins, config, store)
+    assert len(report.unchanged) == 6 and not report.added and not report.removed
+
+
+def test_changing_one_of_two_identical_files_keeps_the_other(twins: Path, config):
+    store, _ = _ingest([twins], config)
+    (twins / "valve copy.md").write_text("The relief valve now opens at eight bar.", encoding="utf-8")
+    report = _update(twins, config, store)
+    assert _names(report.updated) == {"valve copy.md"}
+    vectors = store.vectors.get()
+    files_by_text = dict(zip(vectors["documents"], vectors["metadatas"], strict=True))
+    assert _names([files_by_text[VALVE]["source"]]) == {"valve.md"}
+    assert "The relief valve now opens at eight bar." in files_by_text
+
+
+def test_deleting_both_identical_files_removes_their_vector(twins: Path, config):
+    store, _ = _ingest([twins], config)
+    (twins / "valve.md").unlink()
+    (twins / "valve copy.md").unlink()
+    _update(twins, config, store)
+    assert len(store.chunks()) == 5 and len(store.vectors.get()["ids"]) == 5
+    assert VALVE not in store.vectors.get()["documents"]
+
+
+def test_identical_files_take_one_place_in_search_results(twins: Path, config):
+    store, _ = _ingest([twins], config)
+    result = RetrievalPipeline(store, config.retrieval, top_n=5).run("pressure relief valve")
+    assert [p.doc.page_content for p in result.passages].count(VALVE) == 1
