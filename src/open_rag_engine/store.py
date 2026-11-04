@@ -13,7 +13,7 @@ from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 
-from .documents import CHUNK_ID, DOC_ID
+from .documents import CHUNK_ID, SOURCE
 
 
 @dataclass(frozen=True)
@@ -55,22 +55,26 @@ class ChunkStore:
             return [Document(**json.loads(line)) for line in handle if line.strip()]
 
     def add(self, source: str, doc_id: str, chunks: list[Document], index_fingerprint: str) -> None:
-        if chunks:
-            self.vectors.add_documents([_for_chroma(c) for c in chunks], ids=[c.metadata[CHUNK_ID] for c in chunks])
+        self._write_vectors(chunks)
         self._write_chunks([*self.chunks(), *chunks])
         manifest = self.manifest()
         self._write_manifest(Manifest(index_fingerprint, {**manifest.documents, source: doc_id}))
 
     def remove(self, source: str) -> None:
+        """Drop one file. Byte-identical files share chunk IDs, so Chroma holds one vector for them all: it stays until
+        the last of them goes, and is relabelled so a citation never names the file that was removed."""
         manifest = self.manifest()
-        doc_id = manifest.documents.get(source)
-        if doc_id is None:
+        if source not in manifest.documents:
             return
         kept, dropped = [], []
         for chunk in self.chunks():
-            (dropped if chunk.metadata.get(DOC_ID) == doc_id else kept).append(chunk)
-        if dropped:
-            self.vectors.delete(ids=[c.metadata[CHUNK_ID] for c in dropped])
+            (dropped if chunk.metadata.get(SOURCE) == source else kept).append(chunk)
+        remaining = {c.metadata[CHUNK_ID]: c for c in kept}
+        dropped_ids = {c.metadata[CHUNK_ID] for c in dropped}
+        unused = sorted(dropped_ids - remaining.keys())
+        if unused:
+            self.vectors.delete(ids=unused)
+        self._write_vectors([remaining[chunk_id] for chunk_id in sorted(dropped_ids & remaining.keys())])
         self._write_chunks(kept)
         self._write_manifest(
             Manifest(manifest.index_fingerprint, {k: v for k, v in manifest.documents.items() if k != source})
@@ -84,6 +88,11 @@ class ChunkStore:
         for path in (self._chunks_path, self._manifest_path):
             path.unlink(missing_ok=True)
         self.vectors = self._open_vectors()
+
+    def _write_vectors(self, chunks: list[Document]) -> None:
+        """Add these chunks to Chroma, replacing any vector that already has the same ID."""
+        if chunks:
+            self.vectors.add_documents([_for_chroma(c) for c in chunks], ids=[c.metadata[CHUNK_ID] for c in chunks])
 
     def _write_chunks(self, chunks: list[Document]) -> None:
         lines = (
